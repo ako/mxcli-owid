@@ -168,9 +168,8 @@ fetched.
   `-Dhttps.proxyHost` settings — it has its own HTTP client — so if a future
   environment blocks direct egress, set DuckDB's own
   `SET http_proxy = …` rather than relying on `JAVA_TOOL_OPTIONS`.
-- The DuckDB JDBC jar is **81 MB**. It goes in `userlib/` and will be committed
-  unless deliberately excluded — worth a conscious decision, since it dwarfs the
-  rest of the repo.
+- The DuckDB JDBC jar is **81 MB**. I first put it in `userlib/` and
+  git-ignored it — **that was wrong, see #21**.
 
 ## 11. Publishing OData from pure MDL: avoid association nav properties
 
@@ -364,3 +363,39 @@ second path, exercised by `ACT_QueryViaConnector`.
 
 **Lesson, not incidental:** every claim in #3 was checkable in about five
 minutes. "The docs say it is unsupported" is a hypothesis, not a finding.
+
+## 21. Don't hand-drop jars in userlib/ — declare them as Java dependencies
+
+The merged branch would not build for anyone else: `RefreshOwidData` imports
+`org.duckdb`, and I had put the driver in `userlib/` and **git-ignored it**
+(81 MB), so a plain clone had no driver. The SessionStart hook fetched it, which
+hid the problem from me completely — it only bites someone who clones and
+builds without running the hook. This is the exact failure the vega-charts pack
+warns about for a git-ignored `widgets/`; I applied the lesson there and not
+here.
+
+The fix is not "commit the jar in userlib" — it is to declare it:
+
+```sql
+ALTER MODULE Owid
+  ADD JAR DEPENDENCY (
+    group = 'org.duckdb', artifact = 'duckdb_jdbc',
+    version = '1.4.1.0', included = true
+  );
+```
+
+then `mxcli sync-java-deps -p OwidExplorer.mpr`, which resolves it from Maven
+Central into **`vendorlib/`** and writes `vendorlib-sbom.json` beside it.
+`vendorlib/` is tracked (only `/vendorlib/temp/` is ignored), so the jar is in
+the repository — but now it is *declared, versioned and inventoried* rather than
+an anonymous binary someone dropped in a folder.
+
+`ALTER MODULE ... ADD JAR DEPENDENCY` on its own is not enough, and mxcli says
+so plainly: *"not in vendorlib/, so it is not on the classpath yet — the build
+will still succeed and fail at runtime."* Declaring without syncing gives you a
+green build and a `ClassNotFoundException`.
+
+**Verified** with `userlib/` empty: the project compiles, the connector path
+returns `rows=25 first=Afghanistan le=61.454`, and clicking *Refresh from OWID*
+logs a second `RefreshRun` of 13,760 observations. Both DuckDB routes work from
+the declared dependency alone.

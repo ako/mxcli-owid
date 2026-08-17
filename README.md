@@ -98,6 +98,11 @@ and region changes are applied with the **Apply** button; the year box and the
 year arrows update immediately. (mxcli drops `OnChange` on combobox/checkbox —
 see `FINDINGS.md` #14.)
 
+DuckDB is a **declared Java dependency** of the `Owid` module
+(`org.duckdb:duckdb_jdbc:1.4.1.0`), resolved into `vendorlib/` and committed, so
+a fresh clone compiles as-is. If `vendorlib/` is ever incomplete, repair it with
+`./mxcli sync-java-deps -p OwidExplorer.mpr`.
+
 A fresh clone has no `mxcli` binary (it is git-ignored, ~88 MB). The SessionStart
 hook in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds
 mxcli from **ako/mxcli main** and then caches MxBuild, starts PostgreSQL and
