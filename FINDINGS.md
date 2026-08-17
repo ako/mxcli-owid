@@ -170,3 +170,57 @@ fetched.
 - The DuckDB JDBC jar is **81 MB**. It goes in `userlib/` and will be committed
   unless deliberately excluded — worth a conscious decision, since it dwarfs the
   rest of the repo.
+
+## 11. Publishing OData from pure MDL: avoid association nav properties
+
+mxcli's own `mendix-vega-charts` skill pack records that an OData service
+authored purely in MDL could not be built: the service's *association
+representation* defaults to "associated object ID", CE7375 then demands the
+entity's own `ID` as key, and that representation is **not a property MDL can
+set**. Their note says it needs one manual fix in Studio Pro — impossible here.
+
+Designed around it rather than into it: `PublishAssociations: No`, and
+country name / ISO numeric / region are **denormalized onto `Observation`**.
+Vega binds to a flat row anyway (`{country, id, region, year, pop, …}` — exactly
+the mockup's `window.OWID.rows` shape), so the flattening removes a client-side
+join as well as the blocker. The `Observation_Country` association still exists
+for model integrity; it is simply never published. Same for `Topic`, which
+carries `XKey`/`YKey` strings instead of two references to `Indicator`.
+
+**Not yet verified** — this is a design decision taken from the skill pack's
+report. Confirm it survives `mxcli check` and a real build.
+
+## 12. Vega fetches an OData feed exactly once
+
+From the same skill pack: with `chartData` unbound, the widget passes the spec
+through and Vega's own loader fetches the URL. It does **not** follow
+`@odata.nextLink`. A chart pointed at a paged endpoint silently plots the first
+page and looks fine.
+
+At 13,760 rows this is a live risk, so every figure caps its own request with
+`$filter`/`$top` rather than trusting `PageSize`. The single-year figures (map,
+ranked, distribution, table) pull ~215 rows; only the sparkline and focus-line
+figures need a full series, and those filter by country.
+
+Also from that pack: same-origin requests carry the session cookie, so a
+session-authenticated endpoint is reachable from a chart in the same app. Not
+needed here — security is off — but it is why the URL form is viable at all.
+
+## 13. Widening to all countries changes the coverage picture
+
+Switching from the mockup's 27-country sample to all OWID countries:
+
+- OWID's regions table has **276** countries, but 243 survive a join to an ISO
+  numeric code and **215** carry any observations at all. The other 61 are
+  territories (Tokelau, Vatican, Norfolk Island) with no WDI/Maddison series.
+  Filtering to "has population and (GDP or life expectancy)" is what keeps a
+  country out of the picker and off the ranked chart.
+- Coverage across 13,760 country-year cells: population / life expectancy /
+  fertility 99.8 %, child mortality 84.5 %, CO₂ 79.7 %, food 73.2 %, GDP 72.7 %,
+  energy 70.1 %, schooling 67.0 %. GDP and schooling fall because Maddison and
+  Barro-Lee cover fewer countries than the WDI — a real source limit, not a bug.
+- OWID uses **six** continents (North and South America split); the mockup's
+  palette has five. North + South America are folded to `Americas`.
+- Full extract now ~4 s cold against the remote parquet.
+
+**Verified:** 215 countries, 13,760 rows, coverage as above.
