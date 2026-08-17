@@ -1,0 +1,119 @@
+-- Stage 3: refresh, seed and view-state microflows.
+
+-- Thin wrapper around the DuckDB load: stamp a RefreshRun, call the Java
+-- action, record what happened. All the work is in RefreshOwidData.
+CREATE MICROFLOW Owid.ACT_RefreshFromOwid ()
+  RETURNS Owid.RefreshRun AS $Run
+BEGIN
+  $Run = CREATE Owid.RefreshRun (
+    StartedAt = [%CurrentDateTime%],
+    RowsLoaded = 0,
+    Succeeded = false
+  );
+  COMMIT $Run;
+
+  $Rows = CALL JAVA ACTION Owid.RefreshOwidData (
+    BaseUrl = @Owid.CatalogBaseUrl,
+    YearFrom = @Owid.YearFrom,
+    YearTo = @Owid.YearTo
+  );
+
+  CHANGE $Run (
+    CompletedAt = [%CurrentDateTime%],
+    RowsLoaded = $Rows,
+    Succeeded = true,
+    Message = 'Loaded ' + toString($Rows) + ' observations from OWID.'
+  );
+  COMMIT $Run;
+  RETURN $Run;
+END;
+
+-- Seeds the two fixed reference tables and pulls the data on first boot.
+-- Idempotent: re-running adds nothing.
+CREATE MICROFLOW Owid.ASU_Seed ()
+  RETURNS Boolean
+BEGIN
+  RETRIEVE $AnyIndicator FROM Owid.Indicator LIMIT 1;
+  IF $AnyIndicator = empty THEN
+    $I1 = CREATE Owid.Indicator (IndKey = 'pop', Label = 'Population',
+      Unit = 'people', Fmt = '.3s', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = false, SortOrder = 1);
+    $I2 = CREATE Owid.Indicator (IndKey = 'gdp', Label = 'GDP per capita',
+      Unit = 'int-$ (2011 PPP, Maddison)', Fmt = '$,.0f', Scale = Owid.ScaleType.Log,
+      LowerIsBetter = false, SortOrder = 2);
+    $I3 = CREATE Owid.Indicator (IndKey = 'le', Label = 'Life expectancy at birth',
+      Unit = 'years', Fmt = '.1f', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = false, SortOrder = 3);
+    $I4 = CREATE Owid.Indicator (IndKey = 'cm', Label = 'Child mortality',
+      Unit = 'deaths per 1,000 live births', Fmt = '.0f', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = true, SortOrder = 4);
+    $I5 = CREATE Owid.Indicator (IndKey = 'en', Label = 'Primary energy per capita',
+      Unit = 'kWh', Fmt = ',.0f', Scale = Owid.ScaleType.Log,
+      LowerIsBetter = false, SortOrder = 5);
+    $I6 = CREATE Owid.Indicator (IndKey = 'co2', Label = 'CO2 emissions per capita',
+      Unit = 'tonnes', Fmt = '.1f', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = true, SortOrder = 6);
+    $I7 = CREATE Owid.Indicator (IndKey = 'fe', Label = 'Fertility rate',
+      Unit = 'births per woman', Fmt = '.2f', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = true, SortOrder = 7);
+    $I8 = CREATE Owid.Indicator (IndKey = 'kc', Label = 'Daily food supply',
+      Unit = 'kcal per person', Fmt = ',.0f', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = false, SortOrder = 8);
+    $I9 = CREATE Owid.Indicator (IndKey = 'sc', Label = 'Mean years of schooling',
+      Unit = 'years', Fmt = '.1f', Scale = Owid.ScaleType.Linear,
+      LowerIsBetter = false, SortOrder = 9);
+    COMMIT $I1; COMMIT $I2; COMMIT $I3; COMMIT $I4; COMMIT $I5;
+    COMMIT $I6; COMMIT $I7; COMMIT $I8; COMMIT $I9;
+  END IF;
+
+  RETRIEVE $AnyTopic FROM Owid.Topic LIMIT 1;
+  IF $AnyTopic = empty THEN
+    $T1 = CREATE Owid.Topic (TopicId = 'life', Label = 'Life & income',
+      XKey = 'gdp', YKey = 'le', SortOrder = 1,
+      Note = 'The classic: no country is both rich and short-lived.');
+    $T2 = CREATE Owid.Topic (TopicId = 'child', Label = 'Child mortality',
+      XKey = 'gdp', YKey = 'cm', SortOrder = 2,
+      Note = 'Falling everywhere, fastest where it was highest.');
+    $T3 = CREATE Owid.Topic (TopicId = 'energy', Label = 'Energy & CO2',
+      XKey = 'en', YKey = 'co2', SortOrder = 3,
+      Note = 'Emissions track energy use almost linearly.');
+    $T4 = CREATE Owid.Topic (TopicId = 'demog', Label = 'Demography',
+      XKey = 'gdp', YKey = 'fe', SortOrder = 4,
+      Note = 'Fertility converges as income and schooling rise.');
+    $T5 = CREATE Owid.Topic (TopicId = 'food', Label = 'Food supply',
+      XKey = 'gdp', YKey = 'kc', SortOrder = 5,
+      Note = 'Calorie supply plateaus above roughly 3,000 kcal.');
+    $T6 = CREATE Owid.Topic (TopicId = 'edu', Label = 'Education',
+      XKey = 'gdp', YKey = 'sc', SortOrder = 6,
+      Note = 'Schooling gains lag income by about a generation.');
+    COMMIT $T1; COMMIT $T2; COMMIT $T3; COMMIT $T4; COMMIT $T5; COMMIT $T6;
+  END IF;
+
+  -- First boot has no observations; pull them. Takes a few seconds.
+  RETRIEVE $AnyObservation FROM Owid.Observation LIMIT 1;
+  IF $AnyObservation = empty THEN
+    $Run = CALL MICROFLOW Owid.ACT_RefreshFromOwid ();
+    LOG INFO NODE 'Owid' 'Seeded and loaded OWID data on first boot.';
+  END IF;
+  RETURN true;
+END;
+
+-- Backs the header controls. Defaults to the mockup's opening state.
+CREATE MICROFLOW Owid.DS_ViewState ()
+  RETURNS Owid.ViewState AS $State
+BEGIN
+  $State = CREATE Owid.ViewState (
+    Year = @Owid.YearTo,
+    TopicId = 'life',
+    FocusCountry = 'Brazil',
+    ShowAfrica = true,
+    ShowAsia = true,
+    ShowAmericas = true,
+    ShowEurope = true,
+    ShowOceania = true,
+    LogXAxis = true,
+    ShowTrail = true,
+    TopN = 40
+  );
+  RETURN $State;
+END;

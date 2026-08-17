@@ -1,0 +1,127 @@
+-- Stage 1: module, enumerations, entities, associations, constants.
+
+CREATE MODULE Owid;
+
+CREATE ENUMERATION Owid.Region (
+  Africa   'Africa',
+  Asia     'Asia',
+  Americas 'Americas',
+  Europe   'Europe',
+  Oceania  'Oceania'
+);
+
+CREATE ENUMERATION Owid.ScaleType (
+  Linear 'Linear',
+  Log    'Log'
+);
+
+-- All OWID countries that carry data. Region comes from unnesting each
+-- continent's member list; IsoNumeric from resources/iso3166_numeric.csv,
+-- because OWID publishes no numeric code and the choropleth joins on it.
+CREATE PERSISTENT ENTITY Owid.Country (
+  Name:       String(80) NOT NULL,
+  Code:       String(12) NOT NULL,
+  IsoNumeric: Integer NOT NULL,
+  Region:     Enumeration(Owid.Region) NOT NULL
+)
+INDEX (Name);
+
+CREATE PERSISTENT ENTITY Owid.Indicator (
+  IndKey:        String(10) NOT NULL,
+  Label:         String(80) NOT NULL,
+  Unit:          String(60),
+  Fmt:           String(20),
+  Scale:         Enumeration(Owid.ScaleType) NOT NULL,
+  LowerIsBetter: Boolean DEFAULT false,
+  SortOrder:     Integer DEFAULT 0
+)
+INDEX (IndKey);
+
+CREATE PERSISTENT ENTITY Owid.Topic (
+  TopicId:   String(20) NOT NULL,
+  Label:     String(60) NOT NULL,
+  Note:      String(200),
+  XKey:      String(10) NOT NULL,
+  YKey:      String(10) NOT NULL,
+  SortOrder: Integer DEFAULT 0
+)
+INDEX (TopicId);
+
+-- Wide, one row per country-year, all nine measures nullable. Country name,
+-- ISO code and region are denormalized so the OData service can publish with
+-- no association navigation properties (CE7375 — see FINDINGS.md #11).
+CREATE PERSISTENT ENTITY Owid.Observation (
+  Year:        Integer NOT NULL,
+  CountryName: String(80) NOT NULL,
+  IsoNumeric:  Integer NOT NULL,
+  Region:      Enumeration(Owid.Region) NOT NULL,
+  Pop:  Decimal,
+  Gdp:  Decimal,
+  Le:   Decimal,
+  Cm:   Decimal,
+  En:   Decimal,
+  Co2:  Decimal,
+  Fe:   Decimal,
+  Kc:   Decimal,
+  Sc:   Decimal
+)
+INDEX (Year);
+
+CREATE ASSOCIATION Owid.Observation_Country
+  FROM Owid.Observation TO Owid.Country
+  TYPE Reference
+  DELETE_BEHAVIOR DELETE_AND_REFERENCES;
+
+CREATE PERSISTENT ENTITY Owid.RefreshRun (
+  StartedAt:   DateTime NOT NULL,
+  CompletedAt: DateTime,
+  RowsLoaded:  Long DEFAULT 0,
+  Succeeded:   Boolean DEFAULT false,
+  Message:     String(500)
+);
+
+-- Non-persistable: backs the header controls, read by every figure.
+CREATE NON-PERSISTENT ENTITY Owid.ViewState (
+  Year:         Integer DEFAULT 2023,
+  TopicId:      String(20),
+  FocusCountry: String(80),
+  ShowAfrica:   Boolean DEFAULT true,
+  ShowAsia:     Boolean DEFAULT true,
+  ShowAmericas: Boolean DEFAULT true,
+  ShowEurope:   Boolean DEFAULT true,
+  ShowOceania:  Boolean DEFAULT true,
+  LogXAxis:     Boolean DEFAULT true,
+  ShowTrail:    Boolean DEFAULT true,
+  TopN:         Integer DEFAULT 40
+);
+
+-- Carrier for the DuckDB fetch; a microflow turns these into Observations.
+CREATE NON-PERSISTENT ENTITY Owid.FetchedRow (
+  CountryName: String(80),
+  Code:        String(12),
+  IsoNumeric:  Integer,
+  RegionName:  String(20),
+  Year:        Integer,
+  Pop:  Decimal,
+  Gdp:  Decimal,
+  Le:   Decimal,
+  Cm:   Decimal,
+  En:   Decimal,
+  Co2:  Decimal,
+  Fe:   Decimal,
+  Kc:   Decimal,
+  Sc:   Decimal
+);
+
+CREATE CONSTANT Owid.CatalogBaseUrl
+  TYPE String
+  DEFAULT 'https://catalog.ourworldindata.org/'
+  COMMENT 'OWID parquet catalog root; DuckDB httpfs reads from here.';
+
+CREATE CONSTANT Owid.YearFrom
+  TYPE Integer DEFAULT 1960
+  COMMENT 'First year of the observation window.';
+
+CREATE CONSTANT Owid.YearTo
+  TYPE Integer DEFAULT 2023
+  COMMENT 'Last year of the observation window.';

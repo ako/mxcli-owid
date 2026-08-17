@@ -76,6 +76,21 @@ if [ ! -x ./mxcli ]; then
   build_from_source || download_nightly || exit 1
 fi
 
+# The DuckDB JDBC driver is git-ignored (81 MB) but the app does not build
+# without it: Owid.RefreshOwidData imports org.duckdb. Fetch it into userlib/
+# the same way this script fetches mxcli itself.
+DUCKDB_VER="${DUCKDB_JDBC_VERSION:-1.4.1.0}"
+DUCKDB_JAR="userlib/duckdb_jdbc-${DUCKDB_VER}.jar"
+if [ ! -f "$DUCKDB_JAR" ]; then
+  mkdir -p userlib
+  echo "Fetching DuckDB JDBC ${DUCKDB_VER}..."
+  if ! curl -fsSL -o "$DUCKDB_JAR" \
+      "https://repo1.maven.org/maven2/org/duckdb/duckdb_jdbc/${DUCKDB_VER}/duckdb_jdbc-${DUCKDB_VER}.jar"; then
+    rm -f "$DUCKDB_JAR"
+    echo "Could not download the DuckDB JDBC driver; the build will fail without it." >&2
+  fi
+fi
+
 # Keep .ai-context/skills/ in step with this binary. The skills are embedded in
 # mxcli and written once by 'mxcli init', so upgrading the binary used to leave
 # yesterday's guidance in place with no warning — and an agent reads stale

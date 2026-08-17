@@ -32,3 +32,7 @@
 mxcli
 mxcli.exe
 .mxcli/
+
+# DuckDB JDBC driver (81 MB, bundles native libs for every platform).
+# Fetched by .claude/bootstrap-mxcli.sh, same as the mxcli binary above.
+/userlib/duckdb_jdbc-*.jar
