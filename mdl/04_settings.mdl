@@ -1,0 +1,2 @@
+-- Stage 4: run the seed after startup, so a fresh database populates itself.
+ALTER SETTINGS MODEL AfterStartupMicroflow = 'Owid.ASU_Seed';

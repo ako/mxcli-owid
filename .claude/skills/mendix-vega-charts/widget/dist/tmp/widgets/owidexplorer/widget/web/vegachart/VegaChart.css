@@ -1,0 +1,38 @@
+.vega-chart {
+    /* A chart wired to onClick should look clickable. */
+
+    width: 100%;
+}
+
+.vega-chart .vega-embed {
+    width: 100%;
+}
+
+/* Vega sets its own font on text marks; the app's type scale should win. */
+.vega-chart text {
+    font-family: inherit;
+}
+
+.vega-chart-error {
+    padding: 12px 14px;
+    font-family: var(--mxt-font-mono, ui-monospace, monospace);
+    font-size: 12px;
+    line-height: 1.5;
+    color: #a8321e;
+    background: rgba(168, 50, 30, 0.06);
+    border: 1px solid rgba(168, 50, 30, 0.25);
+    border-radius: 2px;
+    white-space: pre-wrap;
+}
+
+/* Marks only — the background and axes are not selections, so the cursor
+   should not promise that they are. */
+.vega-chart-clickable .mark-symbol path,
+.vega-chart-clickable .mark-rect path,
+.vega-chart-clickable .mark-arc path,
+.vega-chart-clickable .mark-area path,
+.vega-chart-clickable .mark-rule path {
+    cursor: pointer;
+}
+
+/*# sourceMappingURL=data:application/json;base64,eyJ2ZXJzaW9uIjozLCJzb3VyY2VzIjpbIi4uLy4uLy4uLy4uLy4uLy4uLy4uL3NyYy91aS9WZWdhQ2hhcnQuY3NzIl0sIm5hbWVzIjpbXSwibWFwcGluZ3MiOiJBQUFBO0lBQ0ksb0RBQW9EOztJQUVwRCxXQUFXO0FBQ2Y7O0FBRUE7SUFDSSxXQUFXO0FBQ2Y7O0FBRUEsMkVBQTJFO0FBQzNFO0lBQ0ksb0JBQW9CO0FBQ3hCOztBQUVBO0lBQ0ksa0JBQWtCO0lBQ2xCLDBEQUEwRDtJQUMxRCxlQUFlO0lBQ2YsZ0JBQWdCO0lBQ2hCLGNBQWM7SUFDZCxtQ0FBbUM7SUFDbkMseUNBQXlDO0lBQ3pDLGtCQUFrQjtJQUNsQixxQkFBcUI7QUFDekI7O0FBRUE7c0NBQ3NDO0FBQ3RDOzs7OztJQUtJLGVBQWU7QUFDbkIiLCJmaWxlIjoiVmVnYUNoYXJ0LmNzcyIsInNvdXJjZXNDb250ZW50IjpbIi52ZWdhLWNoYXJ0IHtcbiAgICAvKiBBIGNoYXJ0IHdpcmVkIHRvIG9uQ2xpY2sgc2hvdWxkIGxvb2sgY2xpY2thYmxlLiAqL1xuXG4gICAgd2lkdGg6IDEwMCU7XG59XG5cbi52ZWdhLWNoYXJ0IC52ZWdhLWVtYmVkIHtcbiAgICB3aWR0aDogMTAwJTtcbn1cblxuLyogVmVnYSBzZXRzIGl0cyBvd24gZm9udCBvbiB0ZXh0IG1hcmtzOyB0aGUgYXBwJ3MgdHlwZSBzY2FsZSBzaG91bGQgd2luLiAqL1xuLnZlZ2EtY2hhcnQgdGV4dCB7XG4gICAgZm9udC1mYW1pbHk6IGluaGVyaXQ7XG59XG5cbi52ZWdhLWNoYXJ0LWVycm9yIHtcbiAgICBwYWRkaW5nOiAxMnB4IDE0cHg7XG4gICAgZm9udC1mYW1pbHk6IHZhcigtLW14dC1mb250LW1vbm8sIHVpLW1vbm9zcGFjZSwgbW9ub3NwYWNlKTtcbiAgICBmb250LXNpemU6IDEycHg7XG4gICAgbGluZS1oZWlnaHQ6IDEuNTtcbiAgICBjb2xvcjogI2E4MzIxZTtcbiAgICBiYWNrZ3JvdW5kOiByZ2JhKDE2OCwgNTAsIDMwLCAwLjA2KTtcbiAgICBib3JkZXI6IDFweCBzb2xpZCByZ2JhKDE2OCwgNTAsIDMwLCAwLjI1KTtcbiAgICBib3JkZXItcmFkaXVzOiAycHg7XG4gICAgd2hpdGUtc3BhY2U6IHByZS13cmFwO1xufVxuXG4vKiBNYXJrcyBvbmx5IOKAlCB0aGUgYmFja2dyb3VuZCBhbmQgYXhlcyBhcmUgbm90IHNlbGVjdGlvbnMsIHNvIHRoZSBjdXJzb3JcbiAgIHNob3VsZCBub3QgcHJvbWlzZSB0aGF0IHRoZXkgYXJlLiAqL1xuLnZlZ2EtY2hhcnQtY2xpY2thYmxlIC5tYXJrLXN5bWJvbCBwYXRoLFxuLnZlZ2EtY2hhcnQtY2xpY2thYmxlIC5tYXJrLXJlY3QgcGF0aCxcbi52ZWdhLWNoYXJ0LWNsaWNrYWJsZSAubWFyay1hcmMgcGF0aCxcbi52ZWdhLWNoYXJ0LWNsaWNrYWJsZSAubWFyay1hcmVhIHBhdGgsXG4udmVnYS1jaGFydC1jbGlja2FibGUgLm1hcmstcnVsZSBwYXRoIHtcbiAgICBjdXJzb3I6IHBvaW50ZXI7XG59XG4iXX0=*/

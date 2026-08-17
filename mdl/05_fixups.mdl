@@ -1,0 +1,9 @@
+-- Stage 5: fixups.
+-- RowsLoaded must be Long: the Java action returns a Long row count, and MDL
+-- has no in-place attribute retype, so drop and re-add.
+ALTER ENTITY Owid.RefreshRun DROP ATTRIBUTE IF EXISTS RowsLoaded;
+ALTER ENTITY Owid.RefreshRun ADD ATTRIBUTE RowsLoaded: Long DEFAULT 0;
+
+-- FetchedRow was the carrier for the thin-Java design; the load now happens
+-- inside RefreshOwidData, so nothing references it.
+DROP ENTITY Owid.FetchedRow;

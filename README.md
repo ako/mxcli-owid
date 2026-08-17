@@ -1,1 +1,107 @@
-# mxcli-owid
+# OwidExplorer — "The Development Plate"
+
+A single-page data-visualization dashboard over **Our World in Data** development
+indicators, built as a Mendix app with [mxcli](https://github.com/ako/mxcli).
+
+## What it is
+
+A dashboard that lets one person explore how 215 countries developed between 1960
+and 2023 across nine indicators — income, life expectancy, child mortality,
+energy, CO₂, fertility, food supply, schooling and population. You pick a
+**topic** (which pair of indicators to plot), scrub or play a **year**, filter by
+**region**, and click any country to make it the **focus**; every figure on the
+page re-reads that shared state.
+
+It is a **single-user app with no security** — no login, no user roles. Anonymous
+access goes straight to the dashboard.
+
+## How it works
+
+DuckDB runs **inside the Mendix runtime** (driver in `userlib/`, driven by the
+`RefreshOwidData` Java action). It reads OWID's parquet files over HTTP range
+requests, harmonizes nine sources into one country-year table, and materializes
+215 countries x 64 years = 13,760 observations into Mendix entities. Those are
+published as OData at `/odata/owid/`, and the seven figures are Vega-Lite specs
+rendered by a pluggable widget.
+
+"Live" means **re-runnable on demand** against current OWID data — the
+*Refresh from OWID* button re-runs the whole extract — not fetched per request:
+the extract takes seconds, which is fine for a refresh and far too slow to serve
+a chart.
+
+## What it keeps track of
+
+Reference data:
+
+- **Country** — all 215 OWID countries that carry data: name, ISO alpha-3, ISO
+  numeric code (for the choropleth), and region. Derived from OWID's own regions
+  table, not hand-listed.
+- **Indicator** — the nine series: key, label, unit, number format, and whether it
+  is drawn on a log scale or "lower is better".
+- **Topic** — the six preset x/y indicator pairings the topic switcher offers.
+
+Observation data (fetched from OWID, refreshable):
+
+- **Observation** — one row per country per year, carrying all nine indicator
+  values. 215 × 64 = 13,760 rows. Country, ISO code and region are denormalized
+  onto the row: that is the flat shape Vega binds to.
+
+## Where the data comes from
+
+Live from OWID's public parquet catalog at `catalog.ourworldindata.org`, read by
+**DuckDB running in-process inside the Mendix runtime** (DuckDB JDBC in
+`userlib/`, driven by a Java action). DuckDB's `httpfs` extension queries the
+remote parquet files directly over HTTP range requests — no bulk download.
+
+| Indicator | Source table |
+| --- | --- |
+| GDP per capita | `ggdc/2024-04-26/maddison_project_database` (ends 2022) |
+| Population, life expectancy, child mortality, fertility, CO₂ | `worldbank_wdi/2026-07-27/wdi` |
+| Primary energy per capita | `energy/2026-05-05/primary_energy_consumption` |
+| Daily food supply | `faostat/2026-05-22/additional_variables` |
+| Mean years of schooling | `education/2023-07-17/education_barro_lee_projections` |
+
+The nine series are harmonized into one country/year table by a single DuckDB
+query, materialized into Mendix entities, and **published as an OData service**
+that the charts fetch from. A refresh action re-runs the query on demand.
+
+The Mendix **External Database Connector** also reaches the same DuckDB, via
+Mendix's `BYOD` ("bring your own driver") type — `Owid.OwidDuck`, exercised by
+`ACT_QueryViaConnector` and reachable at `POST /odata/owid/QueryViaConnector`.
+The Java-action path drives the dashboard because it expresses the whole
+nine-source harmonization; the connector is the supported-product route to the
+same data.
+
+See `FINDINGS.md` for the data caveats, and #20 for the two traps in wiring a
+BYOD connection (the connection string must be a constant reference, and
+username/password must reference constants even when the driver needs neither
+— both build green and fail later).
+
+## Look and feel
+
+The **Industry** design system from the supplied mockup: steel-blue `#5980a6` on a
+light technical ground `#f2f2f3`, Barlow Condensed headings over Barlow body text,
+a modular grid, and cards and figures drawn as square-cornered hairline "blueprint"
+objects with `+` registration marks at their corners. Built on mxcli's `signal`
+theme with its tokens retuned to the Industry palette.
+
+Charts are Vega-Lite specifications, as in the mockup.
+
+## Running it
+
+```bash
+./mxcli run --local -p OwidExplorer.mpr     # http://localhost:8080/
+```
+
+The dashboard opens on **2022**, the last year Maddison publishes GDP for. Topic
+and region changes are applied with the **Apply** button; the year box and the
+year arrows update immediately. (mxcli drops `OnChange` on combobox/checkbox —
+see `FINDINGS.md` #14.)
+
+A fresh clone has no `mxcli` binary (it is git-ignored, ~88 MB). The SessionStart
+hook in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds
+mxcli from **ako/mxcli main** and then caches MxBuild, starts PostgreSQL and
+creates the database.
+
+- Mendix **11.13.0**
+- mxcli built from source, `ako/mxcli` main

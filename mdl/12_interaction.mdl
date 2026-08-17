@@ -1,0 +1,68 @@
+-- Stage 12: the controls.
+--
+-- Topic is an enumeration on ViewState rather than a free string, so radio
+-- buttons bind to it directly and no per-topic microflow is needed. It is
+-- mapped back to Topic.TopicId when the payloads are built.
+
+CREATE OR MODIFY ENUMERATION Owid.TopicKey (
+  life   'Life & income',
+  child  'Child mortality',
+  energy 'Energy & CO2',
+  demog  'Demography',
+  food   'Food supply',
+  edu    'Education'
+);
+
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS TopicSel: Enumeration(Owid.TopicKey);
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS Selection: String;
+
+-- Pulls one field out of the datum JSON the chart writes on click.
+CREATE OR MODIFY JAVA ACTION Owid.JsonField(
+  Json: String NOT NULL,
+  Field: String NOT NULL
+) RETURNS String
+EXPOSED AS 'JSON field' IN 'OWID'
+AS $$
+if (Json == null || Json.isEmpty()) return "";
+java.util.regex.Matcher m = java.util.regex.Pattern
+    .compile("\"" + java.util.regex.Pattern.quote(Field) + "\"\\s*:\\s*\"([^\"]*)\"")
+    .matcher(Json);
+return m.find() ? m.group(1) : "";
+$$;
+
+-- Clicking any mark makes that country the focus, exactly as in the mockup.
+-- A click on empty space writes no country; leave the focus alone then.
+CREATE MICROFLOW Owid.ACT_ChartClick ($State: Owid.ViewState)
+BEGIN
+  $Clicked = CALL JAVA ACTION Owid.JsonField (
+    Json = $State/Selection,
+    Field = 'country'
+  );
+  IF $Clicked != '' THEN
+    CHANGE $State (FocusCountry = $Clicked);
+    $Filled = CALL MICROFLOW Owid.SUB_FillViewState (State = $State);
+  END IF;
+END;
+
+-- Step the year without dragging, and jump to the ends of the record.
+CREATE MICROFLOW Owid.ACT_YearStep ($State: Owid.ViewState, $Delta: Integer)
+BEGIN
+  declare $Next Integer = $State/Year + $Delta;
+  IF $Next < @Owid.YearFrom THEN
+    set $Next = @Owid.YearFrom;
+  ELSIF $Next > @Owid.YearTo THEN
+    set $Next = @Owid.YearTo;
+  END IF;
+  CHANGE $State (Year = $Next);
+  $Filled = CALL MICROFLOW Owid.SUB_FillViewState (State = $State);
+END;
+
+CREATE MICROFLOW Owid.ACT_YearBack ($State: Owid.ViewState)
+BEGIN
+  $R = CALL MICROFLOW Owid.ACT_YearStep (State = $State, Delta = -1);
+END;
+
+CREATE MICROFLOW Owid.ACT_YearNext ($State: Owid.ViewState)
+BEGIN
+  $R = CALL MICROFLOW Owid.ACT_YearStep (State = $State, Delta = 1);
+END;

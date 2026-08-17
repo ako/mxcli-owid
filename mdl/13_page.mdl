@@ -1,0 +1,455 @@
+-- Stage 13: the dashboard.
+--
+-- One data view over DS_ViewState. Every control writes to that object and
+-- calls ACT_Apply, which rebuilds all the payloads, so the seven figures move
+-- together the way the mockup's shared state does.
+--
+-- Each figure is the same widget with a different static spec, reading generic
+-- `x`/`y` fields — which is why one spec serves all six topics. Specs carry no
+-- axis titles: the indicator names change per topic, so the card header shows
+-- them instead. chartHeight 0 means "as tall as it renders".
+--
+-- Single quotes are doubled inside spec strings, per MDL string rules.
+
+CREATE OR REPLACE PAGE Owid.Dashboard
+(
+  Title: 'The Development Plate',
+  Layout: Atlas_Core.Atlas_Default,
+  Url: 'dashboard'
+)
+{
+  DATAVIEW dvState (DataSource: MICROFLOW Owid.DS_ViewState, Class: 'owid-page') {
+
+    CONTAINER header (Class: 'owid-header') {
+      CONTAINER headerLeft (Class: 'owid-header-left') {
+        DYNAMICTEXT kicker (Content: 'Our World in Data · live extract', Class: 'owid-kicker')
+        DYNAMICTEXT title (Content: 'The Development Plate', Class: 'owid-title')
+      }
+      CONTAINER headerRight (Class: 'owid-header-right') {
+        DYNAMICTEXT scope (Content: '{1} countries · 1960–2023 · 9 indicators',
+          ContentParams: [{1} = CountryCount], Class: 'owid-meta')
+        DYNAMICTEXT focusLine (Content: 'Focus  {1}',
+          ContentParams: [{1} = FocusCountry], Class: 'owid-focus')
+      }
+    }
+
+    CONTAINER controls (Class: 'owid-controls') {
+      COMBOBOX cbTopic (Label: 'Topic', Attribute: TopicSel,
+        OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject), Class: 'owid-topics')
+      CONTAINER regionBox (Class: 'owid-regions') {
+        CHECKBOX cbAfrica (Label: 'Africa', Attribute: ShowAfrica,
+          OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
+        CHECKBOX cbAsia (Label: 'Asia', Attribute: ShowAsia,
+          OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
+        CHECKBOX cbAmericas (Label: 'Americas', Attribute: ShowAmericas,
+          OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
+        CHECKBOX cbEurope (Label: 'Europe', Attribute: ShowEurope,
+          OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
+        CHECKBOX cbOceania (Label: 'Oceania', Attribute: ShowOceania,
+          OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
+      }
+      -- mxcli silently drops OnChange on combobox, radiobuttons and checkbox
+      -- (FINDINGS #14) — only textbox and actionbutton keep their action. So
+      -- topic and region changes are applied by this button rather than on
+      -- change. The year box and the year buttons update immediately.
+      ACTIONBUTTON btnApply (Caption: 'Apply',
+        Action: MICROFLOW Owid.ACT_Apply(State: $currentObject), ButtonStyle: Primary)
+    }
+
+    CONTAINER yearBar (Class: 'owid-yearbar') {
+      ACTIONBUTTON btnBack (Caption: '◀',
+        Action: MICROFLOW Owid.ACT_YearBack(State: $currentObject), ButtonStyle: Default)
+      DYNAMICTEXT yearBig (Content: '{1}', ContentParams: [{1} = Year], Class: 'owid-year')
+      ACTIONBUTTON btnNext (Caption: '▶',
+        Action: MICROFLOW Owid.ACT_YearNext(State: $currentObject), ButtonStyle: Default)
+      TEXTBOX tbYear (Label: 'Year', Attribute: Year,
+        OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject), Class: 'owid-yearinput')
+      TEXTBOX tbTopN (Label: 'Dense figures: top N', Attribute: TopN,
+        OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject), Class: 'owid-topn')
+      DYNAMICTEXT topicNote (Content: '{1}', ContentParams: [{1} = TopicNote], Class: 'owid-note')
+    }
+
+    -- FIG 01 — the bubble plot. Area is population, colour is region.
+    CONTAINER figBubble (Class: 'owid-fig owid-fig-wide blueprint') {
+      DYNAMICTEXT hBubble (Content: '{1} against {2}',
+        ContentParams: [{1} = YLabel, {2} = XLabel], Class: 'owid-fig-title')
+      DYNAMICTEXT sBubble (Content: 'Bubble area is population. Click a bubble to change the focus country.  FIG 01', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartBubble (
+        chartData: RowsJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        selection: Selection,
+        onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "table"},
+  "width": "container",
+  "height": 430,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#dededf", "title": null},
+    "legend": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72", "title": null, "symbolStrokeWidth": 0}
+  },
+  "transform": [{"filter": "datum.x != null && datum.y != null"}],
+  "layer": [
+    {
+      "mark": {"type": "circle", "stroke": "#f2f2f3", "strokeWidth": 1, "cursor": "pointer"},
+      "encoding": {
+        "x": {"field": "x", "type": "quantitative", "scale": {"type": "log", "nice": false}, "axis": {"tickCount": 5, "grid": true}},
+        "y": {"field": "y", "type": "quantitative", "scale": {"zero": false, "nice": false}, "axis": {"tickCount": 5, "grid": true}},
+        "size": {"field": "pop", "type": "quantitative", "scale": {"type": "sqrt", "range": [30, 2200]}, "legend": null},
+        "color": {"field": "region", "type": "nominal",
+                  "scale": {"domain": ["Africa","Asia","Americas","Europe","Oceania"],
+                            "range": ["#1d2d3d","#416180","#749dc4","#94bce3","#a9a9ad"]},
+                  "legend": {"orient": "bottom", "direction": "horizontal"}},
+        "opacity": {"value": 0.75},
+        "tooltip": [
+          {"field": "country", "title": "Country"},
+          {"field": "year", "title": "Year", "format": "d"},
+          {"field": "y", "type": "quantitative", "format": ".2f"},
+          {"field": "x", "type": "quantitative", "format": ",.0f"},
+          {"field": "pop", "type": "quantitative", "title": "Population", "format": ".3s"}
+        ]
+      }
+    },
+    {
+      "transform": [{"filter": "datum.pop > 100000000"}],
+      "mark": {"type": "text", "dy": -8, "baseline": "bottom", "font": "Barlow Condensed", "fontSize": 11, "color": "#1d1f20"},
+      "encoding": {
+        "x": {"field": "x", "type": "quantitative", "scale": {"type": "log"}},
+        "y": {"field": "y", "type": "quantitative", "scale": {"zero": false}},
+        "text": {"field": "country"}
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 02 — ranked dot plot, capped to the dense-figure top N.
+    CONTAINER figRank (Class: 'owid-fig blueprint') {
+      DYNAMICTEXT hRank (Content: 'Ranked, {1}', ContentParams: [{1} = Year], Class: 'owid-fig-title')
+      DYNAMICTEXT sRank (Content: '{1}, top countries in view.  FIG 02',
+        ContentParams: [{1} = YLabel], Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartRank (
+        chartData: SlopeJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        selection: Selection,
+        onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "table"},
+  "width": "container",
+  "height": 430,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 9.5, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#dededf", "title": null}
+  },
+  "transform": [
+    {"filter": "datum.y != null"},
+    {"joinaggregate": [{"op": "max", "field": "year", "as": "maxYear"}]},
+    {"filter": "datum.year == datum.maxYear"}
+  ],
+  "layer": [
+    {
+      "mark": {"type": "rule", "color": "#dededf"},
+      "encoding": {
+        "x": {"field": "y", "type": "quantitative", "axis": {"tickCount": 4, "grid": true}},
+        "x2": {"datum": 0},
+        "y": {"field": "country", "type": "nominal", "sort": {"field": "y", "order": "descending"},
+              "axis": {"domain": false, "ticks": false, "labelLimit": 92}}
+      }
+    },
+    {
+      "mark": {"type": "point", "filled": true, "size": 60, "cursor": "pointer"},
+      "encoding": {
+        "x": {"field": "y", "type": "quantitative"},
+        "y": {"field": "country", "type": "nominal", "sort": {"field": "y", "order": "descending"}},
+        "color": {"field": "region", "type": "nominal",
+                  "scale": {"domain": ["Africa","Asia","Americas","Europe","Oceania"],
+                            "range": ["#1d2d3d","#416180","#749dc4","#94bce3","#a9a9ad"]},
+                  "legend": null},
+        "tooltip": [{"field": "country"}, {"field": "y", "type": "quantitative", "format": ".2f"}]
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 03 — the focus country''s whole record.
+    CONTAINER figLine (Class: 'owid-fig blueprint') {
+      DYNAMICTEXT hLine (Content: '{1} since 1960', ContentParams: [{1} = FocusCountry], Class: 'owid-fig-title')
+      DYNAMICTEXT sLine (Content: '{1}. The rule marks the selected year.  FIG 03',
+        ContentParams: [{1} = YLabel], Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartLine (
+        chartData: SeriesJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "table"},
+  "width": "container",
+  "height": 220,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#dededf", "title": null}
+  },
+  "transform": [{"filter": "datum.y != null"}],
+  "layer": [
+    {
+      "mark": {"type": "area", "color": "#749dc4", "opacity": 0.14},
+      "encoding": {
+        "x": {"field": "year", "type": "quantitative", "scale": {"nice": false}, "axis": {"format": "d", "tickCount": 5, "grid": false}},
+        "y": {"field": "y", "type": "quantitative", "scale": {"zero": false, "nice": false}, "axis": {"tickCount": 4, "grid": true}}
+      }
+    },
+    {
+      "mark": {"type": "line", "strokeWidth": 1.8, "color": "#2c455d"},
+      "encoding": {
+        "x": {"field": "year", "type": "quantitative"},
+        "y": {"field": "y", "type": "quantitative", "scale": {"zero": false}},
+        "tooltip": [{"field": "year", "format": "d"}, {"field": "y", "type": "quantitative", "format": ".2f"}]
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 04 — choropleth. Joins the ISO numeric code to world-atlas topojson.
+    CONTAINER figMap (Class: 'owid-fig blueprint') {
+      DYNAMICTEXT hMap (Content: 'Where it stands, {1}', ContentParams: [{1} = Year], Class: 'owid-fig-title')
+      DYNAMICTEXT sMap (Content: 'Countries without a value are drawn as ground.  FIG 04', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartMap (
+        chartData: RowsJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "width": "container",
+  "height": 300,
+  "background": null,
+  "config": {"font": "Barlow", "view": {"stroke": "transparent"},
+             "legend": {"labelFont": "Barlow", "labelFontSize": 9, "labelColor": "#6c6f72"}},
+  "projection": {"type": "naturalEarth1"},
+  "layer": [
+    {
+      "data": {"url": "/vendor/countries-110m.json",
+               "format": {"type": "topojson", "feature": "countries"}},
+      "mark": {"type": "geoshape", "fill": "#e4e4e6", "stroke": "#f2f2f3", "strokeWidth": 0.5}
+    },
+    {
+      "data": {"name": "table"},
+      "transform": [
+        {"filter": "datum.y != null"},
+        {"calculate": "toString(datum.id)", "as": "sid"},
+        {"lookup": "sid",
+         "from": {"data": {"url": "/vendor/countries-110m.json",
+                           "format": {"type": "topojson", "feature": "countries"}},
+                  "key": "id", "fields": ["type", "geometry"]}}
+      ],
+      "mark": {"type": "geoshape", "stroke": "#f2f2f3", "strokeWidth": 0.5},
+      "encoding": {
+        "shape": {"field": "geometry", "type": "geojson"},
+        "color": {"field": "y", "type": "quantitative",
+                  "scale": {"range": ["#d6ebff","#94bce3","#597ea3","#2c455d","#1d2d3d"]},
+                  "legend": {"orient": "bottom-left", "direction": "horizontal",
+                             "gradientLength": 140, "gradientThickness": 8, "title": null}},
+        "tooltip": [{"field": "country"}, {"field": "y", "type": "quantitative", "format": ".2f"}]
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 05 — 1990 against the selected year, one line per country.
+    CONTAINER figSlope (Class: 'owid-fig blueprint') {
+      DYNAMICTEXT hSlope (Content: '1990 → {1}', ContentParams: [{1} = Year], Class: 'owid-fig-title')
+      DYNAMICTEXT sSlope (Content: 'One line per country. Convergence shows as lines closing up.  FIG 05', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartSlope (
+        chartData: SlopeJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        selection: Selection,
+        onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "table"},
+  "width": "container",
+  "height": 300,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow Condensed", "labelFontSize": 11, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#dededf", "title": null}
+  },
+  "transform": [{"filter": "datum.y != null"}],
+  "layer": [
+    {
+      "mark": {"type": "line", "cursor": "pointer", "strokeWidth": 1.2, "opacity": 0.55},
+      "encoding": {
+        "x": {"field": "year", "type": "ordinal", "scale": {"padding": 0.4}, "axis": {"domain": false, "ticks": false, "grid": false}},
+        "y": {"field": "y", "type": "quantitative", "scale": {"zero": false, "nice": false}, "axis": {"tickCount": 4, "grid": true}},
+        "detail": {"field": "country"},
+        "color": {"field": "region", "type": "nominal",
+                  "scale": {"domain": ["Africa","Asia","Americas","Europe","Oceania"],
+                            "range": ["#1d2d3d","#416180","#749dc4","#94bce3","#a9a9ad"]},
+                  "legend": null},
+        "tooltip": [{"field": "country"}, {"field": "year", "format": "d"}, {"field": "y", "type": "quantitative", "format": ".2f"}]
+      }
+    },
+    {
+      "mark": {"type": "point", "filled": true, "size": 22},
+      "encoding": {
+        "x": {"field": "year", "type": "ordinal"},
+        "y": {"field": "y", "type": "quantitative", "scale": {"zero": false}},
+        "color": {"field": "region", "type": "nominal",
+                  "scale": {"domain": ["Africa","Asia","Americas","Europe","Oceania"],
+                            "range": ["#1d2d3d","#416180","#749dc4","#94bce3","#a9a9ad"]},
+                  "legend": null}
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 06 — the spread within each region, with the regional median.
+    CONTAINER figDist (Class: 'owid-fig blueprint') {
+      DYNAMICTEXT hDist (Content: 'Spread by region', Class: 'owid-fig-title')
+      DYNAMICTEXT sDist (Content: 'One tick per country; the diamond is the regional median.  FIG 06', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartDist (
+        chartData: RowsJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        selection: Selection,
+        onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "table"},
+  "width": "container",
+  "height": 260,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#dededf", "title": null}
+  },
+  "transform": [{"filter": "datum.y != null"}],
+  "layer": [
+    {
+      "mark": {"type": "tick", "thickness": 1.6, "size": 20, "opacity": 0.55, "cursor": "pointer"},
+      "encoding": {
+        "x": {"field": "y", "type": "quantitative", "scale": {"zero": false, "nice": false}, "axis": {"tickCount": 5, "grid": true}},
+        "y": {"field": "region", "type": "nominal", "sort": ["Africa","Asia","Americas","Europe","Oceania"],
+              "axis": {"domain": false, "ticks": false, "labelFont": "Barlow Condensed", "labelFontSize": 11}},
+        "color": {"field": "region", "type": "nominal",
+                  "scale": {"domain": ["Africa","Asia","Americas","Europe","Oceania"],
+                            "range": ["#1d2d3d","#416180","#749dc4","#94bce3","#a9a9ad"]},
+                  "legend": null},
+        "tooltip": [{"field": "country"}, {"field": "y", "type": "quantitative", "format": ".2f"}]
+      }
+    },
+    {
+      "transform": [{"aggregate": [{"op": "median", "field": "y", "as": "med"}], "groupby": ["region"]}],
+      "mark": {"type": "point", "shape": "diamond", "filled": true, "size": 70, "color": "#1d1f20"},
+      "encoding": {
+        "x": {"field": "med", "type": "quantitative"},
+        "y": {"field": "region", "type": "nominal", "sort": ["Africa","Asia","Americas","Europe","Oceania"]},
+        "tooltip": [{"field": "region"}, {"field": "med", "type": "quantitative", "title": "Median", "format": ".2f"}]
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 07 — small multiples, one panel per country in the capped set.
+    CONTAINER figSpark (Class: 'owid-fig owid-fig-full blueprint') {
+      DYNAMICTEXT hSpark (Content: 'Whole record, one panel per country', Class: 'owid-fig-title')
+      DYNAMICTEXT sSpark (Content: '{1}, 1960–2023, on a shared vertical scale.  FIG 07',
+        ContentParams: [{1} = YLabel], Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartSpark (
+        chartData: SparkJson,
+        datasetName: 'table',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        selection: Selection,
+        onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "data": {"name": "table"},
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "header": {"labelFont": "Barlow Condensed", "labelFontSize": 10.5, "labelColor": "#1d1f20"}
+  },
+  "transform": [{"filter": "datum.y != null"}],
+  "columns": 9,
+  "facet": {"field": "country", "type": "nominal", "sort": {"field": "pop", "op": "max", "order": "descending"},
+            "header": {"title": null, "labelAnchor": "start", "labelPadding": 1}},
+  "spec": {
+    "width": 112,
+    "height": 38,
+    "layer": [
+      {
+        "mark": {"type": "line", "strokeWidth": 1.3, "cursor": "pointer", "color": "#597ea3"},
+        "encoding": {
+          "x": {"field": "year", "type": "quantitative", "scale": {"nice": false}, "axis": null},
+          "y": {"field": "y", "type": "quantitative", "scale": {"zero": false, "nice": false}, "axis": null},
+          "tooltip": [{"field": "country"}, {"field": "year", "format": "d"}, {"field": "y", "type": "quantitative", "format": ".2f"}]
+        }
+      }
+    ]
+  }
+}')
+    }
+
+    -- TAB 01 — every country in view at the selected year.
+    CONTAINER figTable (Class: 'owid-fig owid-fig-full blueprint') {
+      DYNAMICTEXT hTable (Content: 'The table, {1}', ContentParams: [{1} = Year], Class: 'owid-fig-title')
+      DYNAMICTEXT sTable (Content: 'Every country in view. Blank means OWID has no value.  TAB 01', Class: 'owid-fig-sub')
+      DATAGRID gridObs (DataSource: MICROFLOW Owid.DS_TableRows(State: $currentObject), Class: 'owid-table') {
+        COLUMN cCountry (Attribute: CountryName, Caption: 'Country')
+        COLUMN cRegion (Attribute: Region, Caption: 'Region')
+        COLUMN cYear (Attribute: Year, Caption: 'Year')
+        COLUMN cGdp (Attribute: Gdp, Caption: 'GDP per capita')
+        COLUMN cLe (Attribute: Le, Caption: 'Life expectancy')
+        COLUMN cCm (Attribute: Cm, Caption: 'Child mortality')
+        COLUMN cPop (Attribute: Pop, Caption: 'Population')
+      }
+    }
+
+    FOOTER pageFooter {
+      DYNAMICTEXT footNote (Content: 'Live from Our World in Data · read by DuckDB from the public parquet catalogue · published at /odata/owid/', Class: 'owid-foot')
+      ACTIONBUTTON btnRefresh (Caption: 'Refresh from OWID',
+        Action: MICROFLOW Owid.ACT_RefreshFromOwid, ButtonStyle: Primary)
+    }
+  }
+}
+;
+
+CREATE OR REPLACE NAVIGATION Responsive
+  HOME PAGE Owid.Dashboard;

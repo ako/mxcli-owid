@@ -1,0 +1,14 @@
+-- Stage 9: ViewState carries the chart payloads and the labels the cards show.
+-- Unlimited strings: the spark payload runs to a few hundred KB.
+
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS RowsJson: String;
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS SeriesJson: String;
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS SparkJson: String;
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS SlopeJson: String;
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS TrailJson: String;
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS XLabel: String(120);
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS YLabel: String(120);
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS TopicLabel: String(60);
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS TopicNote: String(200);
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS RegionsCsv: String(120);
+ALTER ENTITY Owid.ViewState ADD ATTRIBUTE IF NOT EXISTS CountryCount: Long;
