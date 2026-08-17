@@ -1,0 +1,94 @@
+{
+  "bomFormat" : "CycloneDX",
+  "specVersion" : "1.4",
+  "version" : 1,
+  "metadata" : {
+    "tools" : [
+      {
+        "vendor" : "CycloneDX",
+        "name" : "cyclonedx-gradle-plugin",
+        "version" : "1.10.0"
+      }
+    ],
+    "component" : {
+      "type" : "application",
+      "bom-ref" : "pkg:maven/com.mendix/temp@1.0.0?type=jar",
+      "group" : "com.mendix",
+      "name" : "temp",
+      "version" : "1.0.0",
+      "purl" : "pkg:maven/com.mendix/temp@1.0.0?type=jar"
+    }
+  },
+  "components" : [
+    {
+      "type" : "library",
+      "bom-ref" : "pkg:maven/org.duckdb/duckdb_jdbc@1.4.1.0?type=jar",
+      "group" : "org.duckdb",
+      "name" : "duckdb_jdbc",
+      "version" : "1.4.1.0",
+      "description" : "A JDBC-Compliant driver for the DuckDB data management system",
+      "hashes" : [
+        {
+          "alg" : "MD5",
+          "content" : "679e30db8b5b7e94e0f9486f349224a6"
+        },
+        {
+          "alg" : "SHA-1",
+          "content" : "d8ca12ec3e658eeca3e09dba4fa6441eb2ff243c"
+        },
+        {
+          "alg" : "SHA-256",
+          "content" : "038db35c2c8fdab337cf0592f1213ba3eac04cdb51b91485adf20b97a0aa3f93"
+        },
+        {
+          "alg" : "SHA-512",
+          "content" : "886cabf0f4c1e2214e6c97df110e48b5b3133d039929172b980f0829f09b6bedcb71419951d5618b6047261cd4d5cab5418e1dae1635c15d5ca17616b22d2823"
+        },
+        {
+          "alg" : "SHA-384",
+          "content" : "dc05e63225e3be2de95200c9dbaee04ee50ece202a4dd9022b33c575e18f89e2a5d2982ac67a31adfa7ff8b2dbcc7282"
+        },
+        {
+          "alg" : "SHA3-384",
+          "content" : "32b6d2cd5a4e2fa405dcf8ef7d0f6e92d037cf6e3fef26dd64d1242ca85ce52760596add7b887e5efd293edb18e337fa"
+        },
+        {
+          "alg" : "SHA3-256",
+          "content" : "a9c6fec400f725728d4eeb2b4eae572f6de505a18f0a35f3f630d6d350ad242f"
+        },
+        {
+          "alg" : "SHA3-512",
+          "content" : "ce6e6dd5bbd53308df2cea152f3ae1b4d59e4bd771eb417f090f5dca4050e29b420eb930da3fb9030c3db7cd7e8f25fea3b8a567758d1b736ad0710f3efee987"
+        }
+      ],
+      "licenses" : [
+        {
+          "license" : {
+            "id" : "MIT",
+            "url" : "https://opensource.org/license/mit/"
+          }
+        }
+      ],
+      "purl" : "pkg:maven/org.duckdb/duckdb_jdbc@1.4.1.0?type=jar",
+      "modified" : false,
+      "externalReferences" : [
+        {
+          "type" : "vcs",
+          "url" : "http://github.com/duckdb/duckdb/tree/main"
+        }
+      ]
+    }
+  ],
+  "dependencies" : [
+    {
+      "ref" : "pkg:maven/com.mendix/temp@1.0.0?type=jar",
+      "dependsOn" : [
+        "pkg:maven/org.duckdb/duckdb_jdbc@1.4.1.0?type=jar"
+      ]
+    },
+    {
+      "ref" : "pkg:maven/org.duckdb/duckdb_jdbc@1.4.1.0?type=jar",
+      "dependsOn" : [ ]
+    }
+  ]
+}

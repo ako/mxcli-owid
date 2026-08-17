@@ -1,0 +1,15 @@
+-- Stage 17: declare DuckDB as a Maven dependency instead of shipping the jar.
+--
+-- The driver was previously dropped in userlib/ and git-ignored (81 MB), which
+-- left a plain clone unable to compile: RefreshOwidData imports org.duckdb, and
+-- the jar only appeared if the SessionStart hook had run. Declaring it in the
+-- module's Java dependencies makes mxbuild resolve it from Maven Central, so
+-- the repository stays small AND every clone builds.
+
+ALTER MODULE Owid
+  ADD JAR DEPENDENCY (
+    group    = 'org.duckdb',
+    artifact = 'duckdb_jdbc',
+    version  = '1.4.1.0',
+    included = true
+  );
