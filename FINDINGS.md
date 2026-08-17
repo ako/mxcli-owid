@@ -514,10 +514,23 @@ ActionCallBuilder.executeInBackground(IContext ctx, String queueName, Date when)
 ActionCallBuilder.withExponentialRetry(int, Duration, Duration)
 ```
 
-`Core.microflowCall("Owid.ACT_RefreshFromOwid").withExponentialRetry(…)
-.executeInBackground(ctx, "Owid.RefreshQueue")` gives queueing *and* retry from
-a headless-authorable Java action — arguably better than the activity property,
-which has no retry configuration.
+This gives queueing *and* retry, which the activity property does not offer.
+
+**A Java action can be queued directly** — no wrapper microflow. Generated Java
+actions extend `UserAction<R>` (confirmed: `RefreshOwidData extends
+UserAction<Long>`), and `Core.userActionCall(String)` returns a
+`UserActionCallBuilder extends ActionCallBuilder`, so:
+
+```java
+Core.userActionCall("Owid.RefreshOwidData")
+    .withParams(baseUrl, yearFrom, yearTo)
+    .withExponentialRetry(5, Duration.ofSeconds(2), Duration.ofMinutes(2))
+    .executeInBackground(ctx, "Owid.RefreshQueue");
+```
+
+That is the better shape here: the queue runs the actual worker rather than a
+wrapper microflow whose only job is to call it. `Core.microflowCall(...)` is the
+equivalent when the unit of work really is a microflow.
 
 ### Why this app should use it
 
