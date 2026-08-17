@@ -474,7 +474,11 @@ body text **14.79:1**, headers **4.52:1** — both pass WCAG AA.
 **Method note:** this class of bug is invisible to a default headless run.
 Render at `colorScheme: 'dark'` as well as light before calling a UI done.
 
-## 24. Task queues on call activities: the SDK setters exist but nothing wires them
+## 24. Task queues on call activities — PARTLY RESOLVED upstream, see #25
+
+**Update: `ako/mxcli` main (`4f893ce`) has since acted on this — but not by
+adding `in queue`. See #25 for what actually shipped, which is more important
+than what I asked for.**
 
 Mendix can run **both** a *Call microflow* and a *Call Java action* activity on
 a task queue — it is a property on the call activity, not a separate construct.
@@ -556,3 +560,58 @@ and a single CDN hiccup fails the load with no retry.
 `RefreshRun` already carries `StartedAt` / `CompletedAt` / `Succeeded` /
 `Message` — a status record for an asynchronous job. The reporting was designed
 for a queue and then the work was run inline anyway.
+
+## 25. What actually shipped for queues — and the data-loss bug behind it
+
+Re-checked against `ako/mxcli` main at `4f893ce`, built and run. `in queue` on a
+call is **still deliberately unimplemented** — the source says so outright:
+
+```go
+// MDL cannot yet author a queued call, so the binding cannot be restated in the
+// script either — refusing is the only option that does not lose data
+// (guard-don't-drop, ADR-0005). Remove this guard when `in queue` exists …
+```
+
+**Verified by test**, not by reading:
+
+| | result |
+| --- | --- |
+| `CREATE QUEUE Owid.RefreshQueue (Parallelism: 1, ClusterWide: true)` | **works** |
+| `SHOW QUEUES` / `DESCRIBE QUEUE` | **round-trips** as `create or modify queue …` |
+| `CALL MICROFLOW … IN QUEUE …` | **parse error** — `mismatched input 'IN' expecting ';'` |
+
+### The part that matters more than the feature I asked for
+
+The real find was a **silent data-loss bug**, not a missing surface:
+`Microflows$MicroflowCall` carried `QueueSettings` in `NullFields` of
+`codec.RegisterTypeDefaults` (the legacy writer hardcoded null too). Correct for
+a newly authored call, destructive for a stored one — and since
+`CREATE OR REPLACE MICROFLOW` rebuilds the whole microflow, it fired on **every
+rewrite**. A queue binding made in Studio Pro was silently dropped by any MDL
+rewrite of that microflow.
+
+Worse, the damage read as an improvement: `mx check` went from
+`[CE1613] "The selected task queue no longer exists"` to **0 errors**, because
+the configuration the error referred to had been deleted. Any "did the error
+count go down?" check would have scored the data loss as a fix.
+
+The fix is `mdl/executor/validate_queued_calls.go` — `checkNoQueuedCalls`
+**refuses** the rewrite rather than half-authoring it, plus queue authoring in
+both engines (`mdl/backend/modelsdk/queue_write.go`, `sdk/mpr/queues.go`).
+
+### Bearing on this project
+
+This app rewrites microflows constantly — `CREATE OR REPLACE`, and repeated
+drop-and-recreate cycles during development. **No harm done here**, because
+nothing in it has a queued call. But had any microflow been queue-bound in
+Studio Pro, my rewrites would have destroyed the binding silently and the
+project would have looked *healthier* afterwards.
+
+Two lessons from their write-up worth carrying:
+
+- **A green build can be the bug.** The correct fix made `mx check` report
+  *more* errors, because the binding it complains about survived.
+- **`describe` showing nothing is not evidence of nothing.** The binding was
+  invisible from every angle — describe omitted it, check went quiet, the write
+  reported success — and only a stored-BSON probe exposed it. My own habit of
+  trusting `DESCRIBE` round-trips as proof has exactly this blind spot.
