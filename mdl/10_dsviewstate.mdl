@@ -76,6 +76,6 @@ BEGIN
     SlopeJson = $Slope,
     TrailJson = $Trail,
     CountryCount = $N
-  );
+  ) REFRESH;
   RETURN $State;
 END;

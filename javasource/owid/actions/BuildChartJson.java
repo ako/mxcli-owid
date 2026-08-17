@@ -17,20 +17,20 @@ public class BuildChartJson extends UserAction<java.lang.String>
 	private final java.lang.String Kind;
 	private final java.lang.String XKey;
 	private final java.lang.String YKey;
-	private final java.lang.Integer Yr;
+	private final java.lang.Long Yr;
 	private final java.lang.String Regions;
 	private final java.lang.String Focus;
-	private final java.lang.Integer TopN;
+	private final java.lang.Long TopN;
 
 	public BuildChartJson(
 		IContext context,
 		java.lang.String _kind,
 		java.lang.String _xKey,
 		java.lang.String _yKey,
-		java.lang.Integer _yr,
+		java.lang.Long _yr,
 		java.lang.String _regions,
 		java.lang.String _focus,
-		java.lang.Integer _topN
+		java.lang.Long _topN
 	)
 	{
 		super(context);

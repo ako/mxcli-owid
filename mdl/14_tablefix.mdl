@@ -1,0 +1,13 @@
+-- Stage 14: the table must follow the selected year, and the opening year must
+-- be one the flagship figure can actually draw.
+
+-- The grid was reading the whole Observation table (all 13,760 rows, starting
+-- at Afghanistan 1960) under a heading that said "The table, 2023".
+CREATE MICROFLOW Owid.DS_TableRows ($State: Owid.ViewState)
+  RETURNS LIST OF Owid.Observation AS $Rows
+BEGIN
+  RETRIEVE $Rows FROM Owid.Observation
+    WHERE Year = $State/Year
+    SORT BY CountryName ASC;
+  RETURN $Rows;
+END;

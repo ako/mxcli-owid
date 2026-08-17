@@ -4,7 +4,7 @@ CREATE MICROFLOW Owid.DS_ViewState ()
   RETURNS Owid.ViewState AS $Filled
 BEGIN
   $State = CREATE Owid.ViewState (
-    Year = @Owid.YearTo,
+    Year = @Owid.YearTo - 1,
     TopicId = 'life',
     TopicSel = Owid.TopicKey.life,
     FocusCountry = 'Brazil',

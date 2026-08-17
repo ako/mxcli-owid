@@ -10,7 +10,16 @@
    bare child elements into a container.
    ========================================================================== */
 
-@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap");
+/* Barlow is vendored under theme/web/vendor/fonts rather than pulled from
+   Google Fonts: the runtime is often reached from a network with no outbound
+   access, and a blocked font request silently falls back to a system sans,
+   which is the one thing this design cannot survive. */
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 400; font-display: swap; src: url('vendor/fonts/Barlow-400.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 500; font-display: swap; src: url('vendor/fonts/Barlow-500.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow'; font-style: normal; font-weight: 600; font-display: swap; src: url('vendor/fonts/Barlow-600.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Condensed'; font-style: normal; font-weight: 500; font-display: swap; src: url('vendor/fonts/BarlowCondensed-500.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Condensed'; font-style: normal; font-weight: 600; font-display: swap; src: url('vendor/fonts/BarlowCondensed-600.woff2') format('woff2'); }
+@font-face { font-family: 'Barlow Condensed'; font-style: normal; font-weight: 700; font-display: swap; src: url('vendor/fonts/BarlowCondensed-700.woff2') format('woff2'); }
 
 :root {
   --owid-bg: #f2f2f3;
@@ -41,7 +50,12 @@
   font-family: var(--font-body);
   padding: 27.2px 27.2px 40px;
   min-height: 100vh;
+}
 
+/* The grid goes on .mx-dataview-content, NOT on the data view itself: Mendix
+   nests every widget inside that wrapper, so a grid on .owid-page would have
+   exactly one child and the whole board would stack in a single column. */
+.owid-page > .mx-dataview-content {
   display: grid;
   grid-template-columns: 1.55fr 0.85fr 1fr;
   gap: var(--owid-gap);
@@ -274,12 +288,67 @@
 
 /* Narrower boards drop to one column rather than squeezing the figures. */
 @media (max-width: 1400px) {
-  .owid-page {
-    grid-template-columns: 1fr 1fr;
-  }
+  .owid-page > .mx-dataview-content { grid-template-columns: 1fr 1fr; }
 }
 @media (max-width: 900px) {
-  .owid-page {
-    grid-template-columns: 1fr;
-  }
+  .owid-page > .mx-dataview-content { grid-template-columns: 1fr; }
+}
+
+/* --- form chrome ------------------------------------------------------- */
+/* The mockup has no form labels: the controls are a segmented control, tags
+   and a year readout. Mendix emits a <label> for every input, which truncated
+   to "To..." / "Y..." and pushed the region tags off the right edge. */
+.owid-page .owid-topics > label,
+.owid-page .owid-yearinput > label,
+.owid-page .owid-topn > label {
+  display: none;
+}
+.owid-page .owid-topics,
+.owid-page .owid-yearinput,
+.owid-page .owid-topn {
+  margin-bottom: 0;
+}
+/* form-horizontal puts inputs in a 2-column grid; collapse it to one. */
+.owid-page .form-group > div[class^="col-"],
+.owid-page .form-group > div[class*=" col-"] {
+  width: 100%;
+  flex: 0 0 100%;
+  max-width: 100%;
+  padding-left: 0;
+}
+
+.owid-controls {
+  min-width: 0;
+}
+.owid-regions {
+  flex-wrap: nowrap;
+}
+.owid-regions .mx-checkbox {
+  margin-bottom: 0;
+}
+
+/* Topic choices read as the mockup's segmented control rather than a stack. */
+.owid-topics .mx-radiobuttons,
+.owid-topics .radio-inline-container {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--owid-space);
+}
+
+/* Numbers in the table are measurements, not identifiers — right-align them so
+   magnitudes line up column-wise. */
+.owid-table td:nth-child(n + 4),
+.owid-table th:nth-child(n + 4) {
+  text-align: right;
+}
+
+/* The topic combobox is the primary control on the board; without the hidden
+   label it collapsed to the width of its clear button. */
+.owid-topics {
+  min-width: 230px;
+}
+.owid-topics .widget-combobox-input-container {
+  border-radius: 0;
+  font-family: var(--font-heading);
+  font-size: 15px;
 }

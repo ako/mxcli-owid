@@ -11,7 +11,7 @@
 --
 -- Single quotes are doubled inside spec strings, per MDL string rules.
 
-CREATE PAGE Owid.Dashboard
+CREATE OR REPLACE PAGE Owid.Dashboard
 (
   Title: 'The Development Plate',
   Layout: Atlas_Core.Atlas_Default,
@@ -34,7 +34,7 @@ CREATE PAGE Owid.Dashboard
     }
 
     CONTAINER controls (Class: 'owid-controls') {
-      RADIOBUTTONS rbTopic (Label: 'Topic', Attribute: TopicSel,
+      COMBOBOX cbTopic (Label: 'Topic', Attribute: TopicSel,
         OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject), Class: 'owid-topics')
       CONTAINER regionBox (Class: 'owid-regions') {
         CHECKBOX cbAfrica (Label: 'Africa', Attribute: ShowAfrica,
@@ -48,6 +48,12 @@ CREATE PAGE Owid.Dashboard
         CHECKBOX cbOceania (Label: 'Oceania', Attribute: ShowOceania,
           OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
       }
+      -- mxcli silently drops OnChange on combobox, radiobuttons and checkbox
+      -- (FINDINGS #14) — only textbox and actionbutton keep their action. So
+      -- topic and region changes are applied by this button rather than on
+      -- change. The year box and the year buttons update immediately.
+      ACTIONBUTTON btnApply (Caption: 'Apply',
+        Action: MICROFLOW Owid.ACT_Apply(State: $currentObject), ButtonStyle: Primary)
     }
 
     CONTAINER yearBar (Class: 'owid-yearbar') {
@@ -244,7 +250,7 @@ CREATE PAGE Owid.Dashboard
   "projection": {"type": "naturalEarth1"},
   "layer": [
     {
-      "data": {"url": "https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json",
+      "data": {"url": "/vendor/countries-110m.json",
                "format": {"type": "topojson", "feature": "countries"}},
       "mark": {"type": "geoshape", "fill": "#e4e4e6", "stroke": "#f2f2f3", "strokeWidth": 0.5}
     },
@@ -254,7 +260,7 @@ CREATE PAGE Owid.Dashboard
         {"filter": "datum.y != null"},
         {"calculate": "toString(datum.id)", "as": "sid"},
         {"lookup": "sid",
-         "from": {"data": {"url": "https://cdn.jsdelivr.net/npm/world-atlas@2.0.2/countries-110m.json",
+         "from": {"data": {"url": "/vendor/countries-110m.json",
                            "format": {"type": "topojson", "feature": "countries"}},
                   "key": "id", "fields": ["type", "geometry"]}}
       ],
@@ -425,7 +431,7 @@ CREATE PAGE Owid.Dashboard
     CONTAINER figTable (Class: 'owid-fig owid-fig-full blueprint') {
       DYNAMICTEXT hTable (Content: 'The table, {1}', ContentParams: [{1} = Year], Class: 'owid-fig-title')
       DYNAMICTEXT sTable (Content: 'Every country in view. Blank means OWID has no value.  TAB 01', Class: 'owid-fig-sub')
-      DATAGRID gridObs (DataSource: DATABASE Owid.Observation, Class: 'owid-table') {
+      DATAGRID gridObs (DataSource: MICROFLOW Owid.DS_TableRows(State: $currentObject), Class: 'owid-table') {
         COLUMN cCountry (Attribute: CountryName, Caption: 'Country')
         COLUMN cRegion (Attribute: Region, Caption: 'Region')
         COLUMN cYear (Attribute: Year, Caption: 'Year')

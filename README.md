@@ -5,7 +5,7 @@ indicators, built as a Mendix app with [mxcli](https://github.com/ako/mxcli).
 
 ## What it is
 
-A dashboard that lets one person explore how 27 countries developed between 1960
+A dashboard that lets one person explore how 215 countries developed between 1960
 and 2023 across nine indicators — income, life expectancy, child mortality,
 energy, CO₂, fertility, food supply, schooling and population. You pick a
 **topic** (which pair of indicators to plot), scrub or play a **year**, filter by
@@ -15,12 +15,27 @@ page re-reads that shared state.
 It is a **single-user app with no security** — no login, no user roles. Anonymous
 access goes straight to the dashboard.
 
+## How it works
+
+DuckDB runs **inside the Mendix runtime** (driver in `userlib/`, driven by the
+`RefreshOwidData` Java action). It reads OWID's parquet files over HTTP range
+requests, harmonizes nine sources into one country-year table, and materializes
+215 countries x 64 years = 13,760 observations into Mendix entities. Those are
+published as OData at `/odata/owid/`, and the seven figures are Vega-Lite specs
+rendered by a pluggable widget.
+
+"Live" means **re-runnable on demand** against current OWID data — the
+*Refresh from OWID* button re-runs the whole extract — not fetched per request:
+the extract takes seconds, which is fine for a refresh and far too slow to serve
+a chart.
+
 ## What it keeps track of
 
-Reference data (fixed, seeded):
+Reference data:
 
-- **Country** — the 27-country sample: display name, the OWID name it is fetched
-  under, ISO numeric code (for the choropleth), and region.
+- **Country** — all 215 OWID countries that carry data: name, ISO alpha-3, ISO
+  numeric code (for the choropleth), and region. Derived from OWID's own regions
+  table, not hand-listed.
 - **Indicator** — the nine series: key, label, unit, number format, and whether it
   is drawn on a log scale or "lower is better".
 - **Topic** — the six preset x/y indicator pairings the topic switcher offers.
@@ -28,7 +43,8 @@ Reference data (fixed, seeded):
 Observation data (fetched from OWID, refreshable):
 
 - **Observation** — one row per country per year, carrying all nine indicator
-  values. 27 × 64 = 1,728 rows.
+  values. 215 × 64 = 13,760 rows. Country, ISO code and region are denormalized
+  onto the row: that is the flat shape Vega binds to.
 
 ## Where the data comes from
 
@@ -39,7 +55,7 @@ remote parquet files directly over HTTP range requests — no bulk download.
 
 | Indicator | Source table |
 | --- | --- |
-| GDP per capita | `ggdc/2024-04-26/maddison_project_database` |
+| GDP per capita | `ggdc/2024-04-26/maddison_project_database` (ends 2022) |
 | Population, life expectancy, child mortality, fertility, CO₂ | `worldbank_wdi/2026-07-27/wdi` |
 | Primary energy per capita | `energy/2026-05-05/primary_energy_consumption` |
 | Daily food supply | `faostat/2026-05-22/additional_variables` |
@@ -67,6 +83,11 @@ Charts are Vega-Lite specifications, as in the mockup.
 ```bash
 ./mxcli run --local -p OwidExplorer.mpr     # http://localhost:8080/
 ```
+
+The dashboard opens on **2022**, the last year Maddison publishes GDP for. Topic
+and region changes are applied with the **Apply** button; the year box and the
+year arrows update immediately. (mxcli drops `OnChange` on combobox/checkbox —
+see `FINDINGS.md` #14.)
 
 A fresh clone has no `mxcli` binary (it is git-ignored, ~88 MB). The SessionStart
 hook in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds

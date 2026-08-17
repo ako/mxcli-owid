@@ -224,3 +224,73 @@ Switching from the mockup's 27-country sample to all OWID countries:
 - Full extract now ~4 s cold against the remote parquet.
 
 **Verified:** 215 countries, 13,760 rows, coverage as above.
+
+## 14. mxcli silently drops OnChange on combobox, radiobuttons and checkbox
+
+The dashboard's controls did nothing. The MDL parsed, `mxcli check` passed, and
+`exec` reported success — but `DESCRIBE PAGE` showed the property was never
+written:
+
+```
+-- written:
+radiobuttons rbTopic (Label: 'Topic', Attribute: TopicSel, Class: 'owid-topics')
+combobox     cbTopic (Label: 'Topic', Attribute: TopicSel, Class: 'owid-topics')
+checkbox     cbAfrica (Label: 'Africa', Attribute: ShowAfrica)
+-- but authored with:
+   OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject)
+```
+
+**Verified** in the browser: clicking a radio checked it but produced **zero**
+`/xas/` requests — no server round-trip at all. `textbox` and `actionbutton`
+keep their actions; those three drop them. Silently, which is the expensive
+part: nothing in check/exec/lint flags it, and the page looks correct.
+
+Worked around with an explicit **Apply** button (an `actionbutton`, which
+works). The year textbox and the year step buttons still update immediately.
+
+> For mxcli: either write the property or fail loudly. A dropped event handler
+> on a page that otherwise builds is very hard to attribute.
+
+## 15. The grid belongs on `.mx-dataview-content`, not on the data view
+
+`.owid-page` was `display: grid` and a full 1632 px wide, yet every figure
+stacked in one ~330 px column. Mendix nests all of a data view's widgets inside
+a `.mx-dataview-content` wrapper, so the grid had exactly **one** child.
+
+Fix: `.owid-page > .mx-dataview-content { display: grid; ... }`. Same for the
+responsive overrides. Worth knowing before debugging CSS that is already correct.
+
+## 16. A changed non-persistable object needs `CHANGE ... REFRESH`
+
+Controls that did reach the server still left the page showing stale payloads:
+`CHANGE $State (...)` without `REFRESH` does not tell the client to re-read the
+object, and a data view over a non-persistable object has nothing else to
+trigger on. `CHANGE $Obj (...) REFRESH;` is the "Refresh in client" flag.
+
+## 17. `mxcli run --local` will not take over a port it already owns
+
+Re-running `run --local` after an edit fails with *"port 8080 (app) is already
+in use ... That is not a process mxcli started"* — it will not adopt or replace
+the previous runtime, deliberately. The previous JVM and the `mxbuild --serve`
+process must be killed first. Note that `pkill -f "mxcli run"` matches the shell
+running it and kills your own command; match the java/mxbuild processes instead.
+
+## 18. Vendor the fonts and the topojson — the browser has no egress
+
+The runtime is reachable but the *browser* in this environment cannot reach
+`fonts.googleapis.com` or `cdn.jsdelivr.net`. Two consequences, both silent:
+Barlow fell back to a system sans, and the choropleth rendered **8 marks**
+instead of 335 because the world-atlas topojson never arrived.
+
+Both are now vendored under `theme/web/vendor/` (Mendix copies `theme/web/**`
+into `deployment/web/`, so they serve from the app at `/vendor/...`). A font or
+map that silently degrades is worse than one that fails loudly, so this is not
+just an offline nicety.
+
+## 19. Maddison's GDP ends in 2022, so the dashboard opens on 2022
+
+At year 2023 the flagship income-vs-life-expectancy figure was **empty**: every
+GDP value is null, so the `datum.x != null` filter removed every mark. The year
+range stays 1960–2023 (life expectancy, population and fertility do reach 2023),
+but the opening year is `YearTo - 1`. Anything plotting GDP at 2023 will be
+blank — that is the source, not a bug.
