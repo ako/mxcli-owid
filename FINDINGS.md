@@ -437,3 +437,39 @@ if (!hostRef.current || !resolvedSpec || awaitingData) { return; }
 **Verified:** 0 warnings on cold load, 0 after Apply, mark counts unchanged
 (255/99/27/333/217/243/202). Worth pushing upstream — it affects every
 attribute-fed chart in the pack, not just this app.
+
+## 23. Dark OS made the table black-on-black; Datagrid 2 has no `<th>`/`<td>`
+
+Reported as "table is unreadable, black on black" — and invisible to me, because
+Playwright defaults to `colorScheme: light` and every screenshot I had taken was
+light. Reproduced immediately with `colorScheme: 'dark'`.
+
+Two compounding causes:
+
+**The theme followed the OS.** `mxcli theme apply` defaults to
+`--variant auto`, which ships both palettes and follows `prefers-color-scheme`.
+Under a dark OS, Atlas painted `.widget-datagrid-grid` at `rgb(22,27,34)` while
+this stylesheet kept Industry's dark ink `rgb(29,31,32)` — a contrast ratio of
+about **1.0**. Industry is a light-only design, so the fix is to stop it
+switching at all:
+
+```bash
+mxcli theme apply signal -p OwidExplorer.mpr --variant light
+```
+
+That edits the generated block the supported way rather than by hand.
+
+**Datagrid 2 is divs, not a table.** The styling was written as
+`.owid-table th` / `.owid-table td` and matched almost nothing: the widget emits
+`<div class="th">` / `<div class="td">` inside `.widget-datagrid-grid`. Probing
+computed styles showed `th` resolving to `null` — the tell. Selectors are now
+`.owid-table .th` / `.owid-table .td`, and the ground and ink are stated
+explicitly rather than inherited, so the table survives whatever palette is
+around it. Right-alignment needs `justify-content: flex-end` as well as
+`text-align`, since the cells are flex containers.
+
+**Verified** by measuring contrast in both schemes, identical in each:
+body text **14.79:1**, headers **4.52:1** — both pass WCAG AA.
+
+**Method note:** this class of bug is invisible to a default headless run.
+Render at `colorScheme: 'dark'` as well as light before calling a UI done.

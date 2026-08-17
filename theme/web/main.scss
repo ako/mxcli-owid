@@ -9,8 +9,8 @@
 //
 // Variant: auto follows the OS and honours a theme-light / theme-dark class on
 // <html>; light or dark bakes one palette with no switching.
-$mxcli-theme-variant: auto;
+$mxcli-theme-variant: light;
 @import "mxcli-atlas-map";
 @import "mxcli-signal";
 @import "mxcli-widgets";
-// mxcli:theme:end signal 1bba41e722cb9b2e
+// mxcli:theme:end signal c6e435875d84798d

@@ -240,13 +240,27 @@
 }
 
 /* --- table ------------------------------------------------------------- */
+/* Datagrid 2 renders divs with .th/.td classes, NOT a real <table>/<th>/<td>,
+   so element selectors never match it. It also paints its own surface from the
+   Atlas palette — under a dark OS that came out near-black while this design
+   kept its dark ink, giving black-on-black. Industry is a light-only design, so
+   the ground and ink are stated explicitly here rather than inherited. */
 .owid-table {
   font-size: 12.5px;
 }
-.owid-table table {
+.owid-table .widget-datagrid-grid,
+.owid-table .widget-datagrid-grid-body,
+.owid-table .tr,
+.owid-table .th,
+.owid-table .td {
+  background: transparent;
+  color: var(--owid-ink);
   border-radius: 0;
 }
-.owid-table th {
+.owid-table .widget-datagrid-grid {
+  background: var(--owid-bg);
+}
+.owid-table .th {
   font-family: var(--font-heading);
   font-weight: 600;
   letter-spacing: 0.04em;
@@ -255,9 +269,18 @@
   color: var(--owid-mute);
   border-bottom: 1px solid var(--owid-ink);
 }
-.owid-table td {
+.owid-table .td {
   border-bottom: 1px solid var(--owid-divider);
   font-variant-numeric: tabular-nums;
+}
+.owid-table .tr:hover .td {
+  background: color-mix(in srgb, var(--owid-accent) 10%, transparent);
+}
+/* The column-selector button sits in the header row and takes the same fill. */
+.owid-table .column-selector-button {
+  background: transparent;
+  color: var(--owid-mute);
+  border-radius: 0;
 }
 
 /* --- footer ------------------------------------------------------------ */
@@ -337,8 +360,9 @@
 
 /* Numbers in the table are measurements, not identifiers — right-align them so
    magnitudes line up column-wise. */
-.owid-table td:nth-child(n + 4),
-.owid-table th:nth-child(n + 4) {
+.owid-table .td:nth-child(n + 4),
+.owid-table .th:nth-child(n + 4) {
+  justify-content: flex-end;
   text-align: right;
 }
 
