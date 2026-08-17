@@ -1,2 +1,285 @@
-@import '../../../theme/web/custom-variables';
+/* ==========================================================================
+   Industry — the design system from the supplied mockup.
 
+   Steel-blue on a light technical ground, Barlow Condensed over Barlow, a
+   modular grid, and cards drawn as square-cornered hairline "blueprint"
+   objects with + registration marks at their corners.
+
+   The marks are drawn with background gradients rather than the mockup's four
+   <i class="corner"> children, because MDL places widgets and cannot inject
+   bare child elements into a container.
+   ========================================================================== */
+
+@import url("https://fonts.googleapis.com/css2?family=Barlow:wght@400;500;600&family=Barlow+Condensed:wght@500;600;700&display=swap");
+
+:root {
+  --owid-bg: #f2f2f3;
+  --owid-ink: #1d1f20;
+  --owid-accent: #5980a6;
+  --owid-accent-700: #3f5f80;
+  --owid-accent-900: #1d2d3d;
+  --owid-divider: #dededf;
+  --owid-mute: #6c6f72;
+
+  --owid-africa: #1d2d3d;
+  --owid-asia: #416180;
+  --owid-americas: #749dc4;
+  --owid-europe: #94bce3;
+  --owid-oceania: #a9a9ad;
+
+  --owid-space: 13.6px;
+  --owid-gap: 20.4px;
+
+  --font-heading: "Barlow Condensed", "Arial Narrow", sans-serif;
+  --font-body: "Barlow", -apple-system, "Segoe UI", sans-serif;
+}
+
+/* The mockup is a full-bleed board, not a centred document. */
+.owid-page {
+  background: var(--owid-bg);
+  color: var(--owid-ink);
+  font-family: var(--font-body);
+  padding: 27.2px 27.2px 40px;
+  min-height: 100vh;
+
+  display: grid;
+  grid-template-columns: 1.55fr 0.85fr 1fr;
+  gap: var(--owid-gap);
+  align-items: start;
+}
+
+/* Full-width bands. */
+.owid-header,
+.owid-controls,
+.owid-yearbar,
+.owid-fig-full {
+  grid-column: 1 / -1;
+}
+
+/* --- header ------------------------------------------------------------ */
+.owid-header {
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: 27.2px;
+  padding-bottom: var(--owid-space);
+  border-bottom: 1px solid var(--owid-ink);
+}
+.owid-header-right {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 6.8px;
+}
+.owid-kicker {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 10px;
+  letter-spacing: 0.18em;
+  text-transform: uppercase;
+  color: var(--owid-accent-700);
+}
+/* display:block matters: adjacent dynamictexts are inline spans and would
+   otherwise run together with no separator (mxcli lint MDL-WIDGET15). */
+.owid-title {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 40px;
+  line-height: 1.05;
+  letter-spacing: -0.02em;
+  margin-top: 2px;
+}
+.owid-meta,
+.owid-focus {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--owid-ink) 50%, transparent);
+}
+.owid-focus {
+  font-family: var(--font-heading);
+  font-size: 20px;
+  letter-spacing: 0;
+  text-transform: none;
+  color: var(--owid-ink);
+}
+
+/* --- controls ---------------------------------------------------------- */
+.owid-controls {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: var(--owid-gap);
+  padding: var(--owid-space) 0;
+  border-bottom: 1px solid var(--owid-divider);
+}
+/* Topic radios read as the mockup's segmented control. */
+.owid-topics .radio-inline,
+.owid-topics label {
+  font-family: var(--font-heading);
+  font-size: 13px;
+  letter-spacing: 0.02em;
+}
+.owid-regions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: var(--owid-space);
+  margin-left: auto;
+}
+.owid-regions label {
+  font-size: 11px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: var(--owid-mute);
+}
+
+.owid-yearbar {
+  display: flex;
+  align-items: center;
+  gap: var(--owid-gap);
+  padding: var(--owid-space) 0;
+}
+.owid-year {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 46px;
+  line-height: 0.9;
+  letter-spacing: -0.02em;
+  min-width: 108px;
+}
+.owid-yearinput input,
+.owid-topn input {
+  width: 90px;
+  border-radius: 0;
+}
+.owid-note {
+  display: block;
+  margin-left: auto;
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--owid-ink) 58%, transparent);
+}
+
+/* --- the blueprint frame ----------------------------------------------- */
+/* Transparent line drawings, never filled rounded blocks. The four + marks are
+   drawn as crossed gradients, one per corner. */
+.blueprint {
+  position: relative;
+  background: transparent;
+  border: 1px solid color-mix(in srgb, var(--owid-ink) 22%, transparent);
+  border-radius: 0;
+  padding: var(--owid-space);
+
+  --mark: color-mix(in srgb, var(--owid-ink) 55%, transparent);
+  background-image:
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark)),
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark)),
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark)),
+    linear-gradient(var(--mark), var(--mark)), linear-gradient(var(--mark), var(--mark));
+  background-repeat: no-repeat;
+  /* horizontal bar, then vertical bar, for each of the four corners */
+  background-size:
+    9px 1px, 1px 9px,
+    9px 1px, 1px 9px,
+    9px 1px, 1px 9px,
+    9px 1px, 1px 9px;
+  background-position:
+    -4px 4px, 4px -4px,
+    calc(100% + 4px) 4px, calc(100% - 4px) -4px,
+    -4px calc(100% - 4px), 4px calc(100% + 4px),
+    calc(100% + 4px) calc(100% - 4px), calc(100% - 4px) calc(100% + 4px);
+}
+
+.owid-fig {
+  display: flex;
+  flex-direction: column;
+  gap: 6.8px;
+  min-width: 0; /* let charts shrink inside the grid rather than overflow */
+}
+.owid-fig-title {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 17px;
+  line-height: 1.2;
+}
+.owid-fig-sub {
+  display: block;
+  font-size: 11.5px;
+  color: color-mix(in srgb, var(--owid-ink) 58%, transparent);
+}
+
+/* Vega fills its container; the widget is the block that gives it width. */
+.owid-fig .widget-vega-chart,
+.owid-fig .vega-embed {
+  width: 100%;
+}
+.owid-fig .vega-embed summary {
+  display: none;
+}
+
+/* The sparkline board is tall with many countries; let it scroll in place
+   rather than push the table off the bottom of the page. */
+.owid-fig-full .vega-embed {
+  max-height: 620px;
+  overflow-y: auto;
+  overflow-x: auto;
+}
+
+/* --- table ------------------------------------------------------------- */
+.owid-table {
+  font-size: 12.5px;
+}
+.owid-table table {
+  border-radius: 0;
+}
+.owid-table th {
+  font-family: var(--font-heading);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  font-size: 11px;
+  color: var(--owid-mute);
+  border-bottom: 1px solid var(--owid-ink);
+}
+.owid-table td {
+  border-bottom: 1px solid var(--owid-divider);
+  font-variant-numeric: tabular-nums;
+}
+
+/* --- footer ------------------------------------------------------------ */
+.owid-foot {
+  display: block;
+  font-size: 11px;
+  color: color-mix(in srgb, var(--owid-ink) 55%, transparent);
+}
+
+/* --- buttons: square corners, accent fill for the one primary ---------- */
+.owid-page .btn {
+  border-radius: 0;
+  font-family: var(--font-heading);
+  letter-spacing: 0.02em;
+}
+.owid-page .btn-primary {
+  background: var(--owid-accent);
+  border-color: var(--owid-accent-700);
+  color: var(--owid-bg);
+}
+.owid-page .btn-primary:hover {
+  background: var(--owid-accent-700);
+}
+.owid-page .btn:focus-visible {
+  outline: 2px solid var(--owid-accent);
+  outline-offset: 2px;
+}
+
+/* Narrower boards drop to one column rather than squeezing the figures. */
+@media (max-width: 1400px) {
+  .owid-page {
+    grid-template-columns: 1fr 1fr;
+  }
+}
+@media (max-width: 900px) {
+  .owid-page {
+    grid-template-columns: 1fr;
+  }
+}

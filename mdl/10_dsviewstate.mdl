@@ -1,0 +1,81 @@
+-- Stage 10: build the ViewState — resolve the topic, assemble the region
+-- filter, then fill every chart payload. Called as the dashboard's data source
+-- and again after any control changes, so one flow drives the whole page.
+
+CREATE MICROFLOW Owid.SUB_FillViewState ($State: Owid.ViewState)
+  RETURNS Owid.ViewState AS $State
+BEGIN
+  -- The enum's own name is the TopicId ('life', 'child', ...), so the radio
+  -- buttons and the seeded Topic rows stay in step with no mapping table.
+  -- Default the selection rather than retrieving Topic twice: a second
+  -- RETRIEVE into the same name is a duplicate variable declaration (CE).
+  IF $State/TopicSel = empty THEN
+    CHANGE $State (TopicSel = Owid.TopicKey.life);
+  END IF;
+  declare $TId String = toString($State/TopicSel);
+  RETRIEVE $Topic FROM Owid.Topic WHERE TopicId = $TId LIMIT 1;
+
+  RETRIEVE $XInd FROM Owid.Indicator WHERE IndKey = $Topic/XKey LIMIT 1;
+  RETRIEVE $YInd FROM Owid.Indicator WHERE IndKey = $Topic/YKey LIMIT 1;
+
+  -- The region filter as a CSV the Java action turns into an OQL IN list.
+  declare $Csv String = '';
+  IF $State/ShowAfrica THEN
+    set $Csv = $Csv + 'Africa,';
+  END IF;
+  IF $State/ShowAsia THEN
+    set $Csv = $Csv + 'Asia,';
+  END IF;
+  IF $State/ShowAmericas THEN
+    set $Csv = $Csv + 'Americas,';
+  END IF;
+  IF $State/ShowEurope THEN
+    set $Csv = $Csv + 'Europe,';
+  END IF;
+  IF $State/ShowOceania THEN
+    set $Csv = $Csv + 'Oceania,';
+  END IF;
+
+  CHANGE $State (
+    TopicId = $Topic/TopicId,
+    TopicLabel = $Topic/Label,
+    TopicNote = $Topic/Note,
+    RegionsCsv = $Csv,
+    XLabel = $XInd/Label + ' — ' + $XInd/Unit,
+    YLabel = $YInd/Label
+  );
+
+  $Rows = CALL JAVA ACTION Owid.BuildChartJson (
+    Kind = 'current', XKey = $Topic/XKey, YKey = $Topic/YKey,
+    Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
+  );
+  $Series = CALL JAVA ACTION Owid.BuildChartJson (
+    Kind = 'series', XKey = $Topic/XKey, YKey = $Topic/YKey,
+    Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
+  );
+  $Spark = CALL JAVA ACTION Owid.BuildChartJson (
+    Kind = 'spark', XKey = $Topic/XKey, YKey = $Topic/YKey,
+    Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
+  );
+  $Slope = CALL JAVA ACTION Owid.BuildChartJson (
+    Kind = 'slope', XKey = $Topic/XKey, YKey = $Topic/YKey,
+    Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
+  );
+  $Trail = CALL JAVA ACTION Owid.BuildChartJson (
+    Kind = 'trail', XKey = $Topic/XKey, YKey = $Topic/YKey,
+    Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
+  );
+
+  RETRIEVE $Countries FROM Owid.Country;
+  $N = COUNT($Countries);
+
+  CHANGE $State (
+    RowsJson = $Rows,
+    SeriesJson = $Series,
+    SparkJson = $Spark,
+    SlopeJson = $Slope,
+    TrailJson = $Trail,
+    CountryCount = $N
+  );
+  RETURN $State;
+END;

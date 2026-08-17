@@ -1,0 +1,124 @@
+-- Stage 8: build the chart payloads.
+--
+-- The widget's `spec` is a static string property, so it cannot vary per
+-- object. Topic switching therefore cannot live in the spec — instead this
+-- action projects whichever pair of indicators the topic selects onto generic
+-- `x` and `y` fields, so ONE static spec serves all six topics.
+--
+-- Built in Java over OQL rather than in a microflow: these payloads are
+-- rebuilt on every year tick, and a microflow loop concatenating thousands of
+-- rows is far too slow for that.
+--
+-- Kinds:
+--   current  one row per visible country at Year          -> bubble, rank, map, dist, table
+--   series   the focus country across all years           -> line
+--   spark    top-N countries by population, all years     -> sparklines
+--   slope    top-N countries at YearFrom and Year         -> slope
+--   trail    the focus country up to Year                 -> bubble trail
+
+CREATE OR MODIFY JAVA ACTION Owid.BuildChartJson(
+  Kind: String NOT NULL,
+  XKey: String NOT NULL,
+  YKey: String NOT NULL,
+  Yr: Integer NOT NULL,
+  Regions: String NOT NULL,
+  Focus: String NOT NULL,
+  TopN: Integer NOT NULL
+) RETURNS String
+EXPOSED AS 'Build chart JSON' IN 'OWID'
+AS $$
+// The indicator key ('gdp') is not the attribute name ('Gdp'); OQL wants the
+// attribute. Mapping through a fixed table both translates and whitelists, so
+// the interpolated column name can only ever be one of these nine.
+java.util.Map<String, String> col = new java.util.HashMap<String, String>();
+col.put("pop", "Pop"); col.put("gdp", "Gdp"); col.put("le", "Le");
+col.put("cm", "Cm");   col.put("en", "En");   col.put("co2", "Co2");
+col.put("fe", "Fe");   col.put("kc", "Kc");   col.put("sc", "Sc");
+String xc = col.get(XKey), yc = col.get(YKey);
+if (xc == null || yc == null) {
+    throw new com.mendix.systemwideinterfaces.MendixRuntimeException(
+        "Unknown indicator key: " + XKey + "/" + YKey);
+}
+
+StringBuilder regionIn = new StringBuilder();
+for (String r : Regions.split(",")) {
+    String t = r.trim();
+    if (t.isEmpty()) continue;
+    if (regionIn.length() > 0) regionIn.append(", ");
+    regionIn.append("'").append(t.replace("'", "")).append("'");
+}
+if (regionIn.length() == 0) regionIn.append("''");
+
+String safeFocus = Focus == null ? "" : Focus.replace("'", "");
+String cols = "CountryName, Region, IsoNumeric, \"Year\", Pop, " + xc + " AS xv, " + yc + " AS yv";
+String base = " FROM Owid.Observation WHERE Region IN (" + regionIn + ")";
+String oql;
+
+if ("series".equals(Kind)) {
+    oql = "SELECT " + cols + base + " AND CountryName = '" + safeFocus + "' ORDER BY \"Year\"";
+} else if ("trail".equals(Kind)) {
+    oql = "SELECT " + cols + base + " AND CountryName = '" + safeFocus
+        + "' AND \"Year\" <= " + Yr + " ORDER BY \"Year\"";
+} else if ("spark".equals(Kind) || "slope".equals(Kind)) {
+    // Dense figures are capped: 215 sparkline panels or 215 slope lines is not
+    // a chart. Rank by population in the current year, then keep whole series
+    // for those countries, with the focus country always pinned in.
+    String topSql = "SELECT CountryName FROM Owid.Observation WHERE Region IN (" + regionIn
+        + ") AND \"Year\" = " + Yr + " AND Pop != NULL ORDER BY Pop DESC LIMIT " + TopN;
+    com.mendix.systemwideinterfaces.connectionbus.data.IDataTable topTbl =
+        com.mendix.core.Core.retrieveOQLDataTable(getContext(), topSql);
+    StringBuilder names = new StringBuilder();
+    for (com.mendix.systemwideinterfaces.connectionbus.data.IDataRow r : topTbl.getRows()) {
+        Object v = r.getValue(getContext(), 0);
+        if (v == null) continue;
+        if (names.length() > 0) names.append(", ");
+        names.append("'").append(String.valueOf(v).replace("'", "")).append("'");
+    }
+    if (safeFocus.length() > 0) {
+        if (names.length() > 0) names.append(", ");
+        names.append("'").append(safeFocus).append("'");
+    }
+    if (names.length() == 0) names.append("''");
+
+    if ("spark".equals(Kind)) {
+        oql = "SELECT " + cols + base + " AND CountryName IN (" + names
+            + ") ORDER BY CountryName, \"Year\"";
+    } else {
+        oql = "SELECT " + cols + base + " AND CountryName IN (" + names
+            + ") AND \"Year\" IN (1990, " + Yr + ") ORDER BY CountryName, \"Year\"";
+    }
+} else {
+    oql = "SELECT " + cols + base + " AND \"Year\" = " + Yr + " ORDER BY CountryName";
+}
+
+com.mendix.systemwideinterfaces.connectionbus.data.IDataTable tbl =
+    com.mendix.core.Core.retrieveOQLDataTable(getContext(), oql);
+
+StringBuilder sb = new StringBuilder("[");
+boolean first = true;
+for (com.mendix.systemwideinterfaces.connectionbus.data.IDataRow row : tbl.getRows()) {
+    Object cn = row.getValue(getContext(), 0);
+    Object rg = row.getValue(getContext(), 1);
+    Object iso = row.getValue(getContext(), 2);
+    Object yrv = row.getValue(getContext(), 3);
+    Object pop = row.getValue(getContext(), 4);
+    Object xv = row.getValue(getContext(), 5);
+    Object yv = row.getValue(getContext(), 6);
+
+    if (!first) sb.append(",");
+    first = false;
+    sb.append("{\"country\":\"")
+      .append(String.valueOf(cn).replace("\\", "\\\\").replace("\"", "\\\""))
+      .append("\",\"region\":\"").append(String.valueOf(rg))
+      .append("\",\"id\":").append(iso == null ? "null" : String.valueOf(iso))
+      .append(",\"year\":").append(yrv == null ? "null" : String.valueOf(yrv))
+      // null, never 0 — OWID genuinely has no CO2 for 1960, and a zero there
+      // would read as a real measurement rather than a gap.
+      .append(",\"pop\":").append(pop == null ? "null" : String.valueOf(pop))
+      .append(",\"x\":").append(xv == null ? "null" : String.valueOf(xv))
+      .append(",\"y\":").append(yv == null ? "null" : String.valueOf(yv))
+      .append("}");
+}
+sb.append("]");
+return sb.toString();
+$$;
