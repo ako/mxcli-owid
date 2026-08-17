@@ -65,8 +65,17 @@ The nine series are harmonized into one country/year table by a single DuckDB
 query, materialized into Mendix entities, and **published as an OData service**
 that the charts fetch from. A refresh action re-runs the query on demand.
 
-See `FINDINGS.md` for why it is embedded DuckDB rather than the Mendix External
-Database Connector, and for the data caveats.
+The Mendix **External Database Connector** also reaches the same DuckDB, via
+Mendix's `BYOD` ("bring your own driver") type — `Owid.OwidDuck`, exercised by
+`ACT_QueryViaConnector` and reachable at `POST /odata/owid/QueryViaConnector`.
+The Java-action path drives the dashboard because it expresses the whole
+nine-source harmonization; the connector is the supported-product route to the
+same data.
+
+See `FINDINGS.md` for the data caveats, and #20 for the two traps in wiring a
+BYOD connection (the connection string must be a constant reference, and
+username/password must reference constants even when the driver needs neither
+— both build green and fail later).
 
 ## Look and feel
 

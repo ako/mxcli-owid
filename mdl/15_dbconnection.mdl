@@ -1,0 +1,35 @@
+-- Stage 15: the External Database Connector, pointed at DuckDB.
+--
+-- Correcting FINDINGS #3: mxcli CAN author a database connection
+-- (createDatabaseConnectionStatement in MDLService.g4), and Mendix has a
+-- 'BYOD' type that skips the driver-presence check and takes the connection
+-- string as given — which is exactly what an unsupported driver like DuckDB
+-- needs. Both halves of the original "not possible" were wrong.
+--
+-- The URL must be a CONSTANT reference, not a literal: Mendix stores it as a
+-- ConstantIdentifier, and a literal there produces a project that cannot be
+-- opened at all (StorageLoadException).
+
+CREATE CONSTANT Owid.DuckDbUrl
+  TYPE String
+  DEFAULT 'jdbc:duckdb:'
+  COMMENT 'JDBC URL for the in-process DuckDB the external connector talks to.';
+
+-- The connector resolves username/password as constant references even when the
+-- driver needs neither; leaving them unset makes it fail at run time with
+-- "Could not find value for constant ''" while the build stays green.
+CREATE CONSTANT Owid.DuckDbUser
+  TYPE String DEFAULT '' COMMENT 'Unused by DuckDB; the connector requires the reference.';
+CREATE CONSTANT Owid.DuckDbPassword
+  TYPE String DEFAULT '' COMMENT 'Unused by DuckDB; the connector requires the reference.';
+
+CREATE DATABASE CONNECTION Owid.OwidDuck
+  TYPE 'BYOD'
+  CONNECTION STRING @Owid.DuckDbUrl
+BEGIN
+  QUERY LifeExpectancyByYear
+    SQL $$SELECT country, year, sp_dyn_le00_in AS le
+          FROM read_parquet('https://catalog.ourworldindata.org/grapher/worldbank_wdi/2026-07-27/wdi/wdi.parquet')
+          WHERE year = 2020 AND sp_dyn_le00_in IS NOT NULL
+          LIMIT 25$$;
+END;

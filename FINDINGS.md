@@ -40,11 +40,12 @@ it as "the same file" — `rm -f` it first.
 After the move, `.claude/bootstrap-mxcli.sh` correctly named `OwidExplorer.mpr`;
 no fixup needed. `mxcli init --tool claude` is idempotent as advertised.
 
-## 3. The External Database Connector is not usable here — two independent blockers
+## 3. ~~The External Database Connector is not usable here~~ — WRONG, see #20
 
-The request was to query OWID live "using external database connector and
-duckdb". Both halves of that ran into walls, and the resolution was to keep
-DuckDB and drop the connector.
+**This finding is retracted. Both blockers below are false — see #20 for what
+actually happens when you try it.** It is left in place because the reasoning
+shows how a confident conclusion was reached from documentation alone without
+running a single command, which is the mistake worth remembering.
 
 **Blocker A — mxcli cannot author the document.** `SHOW DATABASE CONNECTIONS` and
 `SELECT * FROM CATALOG.…` can *read* external database connections, but MDL has
@@ -294,3 +295,72 @@ GDP value is null, so the `datum.x != null` filter removed every mark. The year
 range stays 1960–2023 (life expectancy, population and fertility do reach 2023),
 but the opening year is `YearTo - 1`. Anything plotting GDP at 2023 will be
 blank — that is the source, not a bug.
+
+## 20. RETRACTION of #3: the External Database Connector works, via BYOD
+
+Finding #3 claimed two independent blockers. **Both were wrong**, and both were
+asserted from reading docs rather than trying the command. Corrected by test:
+
+**"mxcli cannot author a DatabaseConnection" — false.** `MDLService.g4` has
+`createDatabaseConnectionStatement`, and it works:
+
+```sql
+create database connection Owid.OwidDuck
+  type 'BYOD'
+  connection string @Owid.DuckDbUrl
+  username @Owid.DuckDbUser
+  password @Owid.DuckDbPassword
+begin
+  query LifeExpectancyByYear
+    sql $$SELECT country, year, sp_dyn_le00_in AS le FROM read_parquet('…') …$$
+    returns Owid.DuckRow map (country as Country, year as Year, le as Le);
+end;
+```
+
+`SHOW DATABASE CONNECTIONS` lists it, `DESCRIBE` round-trips it, and mxbuild
+accepts it. The microflow side exists too: `EXECUTE DATABASE QUERY
+Module.Connection.QueryName (…)`. I had grepped the docs
+(`MISSING_CAPABILITIES.md`, `MDL_FEATURE_MATRIX.md`) and stopped there; **those
+docs are stale**, and `mxcli syntax` has no `database-connection` topic, which
+made the gap look real.
+
+**"No DuckDB driver" — false.** Mendix has a **`BYOD`** type ("bring your own
+driver") that skips the driver-presence check and takes the connection string
+verbatim. mxcli's own linter says so, unprompted:
+
+> type "duckdb" is not one Studio Pro offers … Use one of: 'MSSQL', 'MySQL',
+> 'Oracle', 'PostgreSQL', 'Snowflake', 'BYOD'. For a JDBC driver Mendix has no
+> entry for, use 'BYOD'. *(MDL-DB01)*
+
+**Verified end to end.** `POST /odata/owid/QueryViaConnector` returns:
+
+```json
+{"value": "rows=25 first=Afghanistan le=61.454"}
+```
+
+— 25 rows read by the External Database Connector, through DuckDB's JDBC driver,
+from OWID's parquet over `httpfs`. Afghanistan's 2020 life expectancy is 61.45.
+Note this needs **no** DatabaseConnector marketplace module in the project; the
+connector runtime is part of the platform.
+
+### Two traps on the way, both of which build green
+
+1. **The connection string must be a constant reference, not a literal.** A
+   literal produces a project that *cannot be opened at all* —
+   `StorageLoadException: "is not a valid ConstantIdentifier"`. mxcli's linter
+   catches this (MDL058); mxbuild does not.
+2. **`username`/`password` must reference constants even when the driver needs
+   neither.** Omitting them writes `username @` with an empty reference, the
+   build stays green, and the query fails only at run time with
+   `ExternalDatabaseConnector: Could not find value for constant ''`.
+
+### What this means for the app
+
+The DuckDB-inside-a-Java-action path (#3's "what was done instead") still drives
+the dashboard: it does the whole nine-source harmonization, which is far more
+than one connector query expresses. But the connector was never the blocker it
+was reported to be, and `Owid.OwidDuck` now exists in the model as a working
+second path, exercised by `ACT_QueryViaConnector`.
+
+**Lesson, not incidental:** every claim in #3 was checkable in about five
+minutes. "The docs say it is unsupported" is a hypothesis, not a finding.

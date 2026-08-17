@@ -74,4 +74,7 @@ CREATE ODATA SERVICE Owid.OwidApi (
       Kc as 'kc' (Sortable),
       Sc as 'sc' (Sortable)
     );
+
+  -- Proves the External Database Connector path at runtime, not just at build.
+  publish microflow Owid.ACT_QueryViaConnector as 'QueryViaConnector';
 };

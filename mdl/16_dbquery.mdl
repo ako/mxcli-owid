@@ -1,0 +1,38 @@
+-- Stage 16: prove the connector path end to end — a query that returns rows
+-- into an entity, and a microflow that executes it.
+
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.DuckRow (
+  Country: String(80),
+  Year:    Integer,
+  Le:      Decimal
+);
+
+CREATE OR MODIFY DATABASE CONNECTION Owid.OwidDuck
+  TYPE 'BYOD'
+  CONNECTION STRING @Owid.DuckDbUrl
+  USERNAME @Owid.DuckDbUser
+  PASSWORD @Owid.DuckDbPassword
+BEGIN
+  QUERY LifeExpectancyByYear
+    SQL $$SELECT country, year, sp_dyn_le00_in AS le
+          FROM read_parquet('https://catalog.ourworldindata.org/grapher/worldbank_wdi/2026-07-27/wdi/wdi.parquet')
+          WHERE year = 2020 AND sp_dyn_le00_in IS NOT NULL
+          LIMIT 25$$
+    RETURNS Owid.DuckRow
+    MAP (country AS Country, year AS Year, le AS Le);
+END;
+
+-- Returns a summary rather than the rows themselves: publishing the row entity
+-- would put an internal probe type into the service's public contract.
+CREATE OR MODIFY MICROFLOW Owid.ACT_QueryViaConnector ()
+  RETURNS String AS $Summary
+BEGIN
+  $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.LifeExpectancyByYear ();
+  $N = COUNT($Rows);
+  $First = HEAD($Rows);
+  declare $Summary String = 'rows=' + toString($N);
+  IF $First != empty THEN
+    set $Summary = $Summary + ' first=' + $First/Country + ' le=' + toString($First/Le);
+  END IF;
+  RETURN $Summary;
+END;
