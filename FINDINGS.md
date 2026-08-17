@@ -473,3 +473,59 @@ body text **14.79:1**, headers **4.52:1** — both pass WCAG AA.
 
 **Method note:** this class of bug is invisible to a default headless run.
 Render at `colorScheme: 'dark'` as well as light before calling a UI done.
+
+## 24. Queued sub-microflow calls: the SDK setter exists but nothing wires it
+
+Mendix supports running a **Call microflow** activity on a task queue — it is a
+property on the call activity, not a separate construct. My earlier note that
+"MDL cannot mark a call as queued" was right about the language and wrong about
+the cause: this is not a missing capability in mxcli, it is unwired plumbing.
+
+What is actually there, checked layer by layer:
+
+| Layer | State |
+| --- | --- |
+| `CREATE QUEUE Mod.Name (Parallelism: n, ClusterWide: b)` | **works** — `createQueueStatement`, `MDLDomainModel.g4:345` |
+| `MicroflowCall.SetQueueQualifiedName(string)` | **generated** — `modelsdk/gen/microflows/types.go:7738` |
+| `MicroflowCall.SetQueueSettings(element)` | **generated** — same file, 7728 |
+| `JavaActionCallAction.SetQueueQualifiedName` | **generated** — 6019 |
+| Anything calling those setters | **nothing** — `grep -rn SetQueueQualifiedName --include=*.go .` outside `modelsdk/gen` returns zero hits |
+| `callMicroflowStatement` grammar | no queue clause (`MDLMicroflow.g4:358`) |
+| Queues elsewhere in MDL | catalog **read only** — `buildQueues` lists `Queues$Queue` units for SHOW/DESCRIBE |
+
+So the model-write side is already generated and reachable; what is missing is a
+grammar clause and one setter call. Something like:
+
+```sql
+CALL MICROFLOW Owid.ACT_RefreshFromOwid () IN QUEUE Owid.RefreshQueue;
+```
+
+The feature matrix marks *Task queue* as `N` across every backend, which reads
+as "not implemented at all" and undersells how close it is.
+
+### What works today instead
+
+The runtime API is fully reachable from a Java action, which MDL *can* author.
+Verified against `com.mendix.public-api.jar`:
+
+```java
+ActionCallBuilder.executeInBackground(IContext ctx, String queueName)
+ActionCallBuilder.executeInBackground(IContext ctx, String queueName, Date when)
+ActionCallBuilder.withExponentialRetry(int, Duration, Duration)
+```
+
+`Core.microflowCall("Owid.ACT_RefreshFromOwid").withExponentialRetry(…)
+.executeInBackground(ctx, "Owid.RefreshQueue")` gives queueing *and* retry from
+a headless-authorable Java action — arguably better than the activity property,
+which has no retry configuration.
+
+### Why this app should use it
+
+`ASU_Seed` is the `AfterStartupMicroflow` and runs the whole DuckDB extract
+**synchronously**, so first boot blocks for ~15 s with the app unavailable. The
+*Refresh from OWID* button likewise holds an HTTP request for the full extract,
+and a single CDN hiccup fails the load with no retry.
+
+`RefreshRun` already carries `StartedAt` / `CompletedAt` / `Succeeded` /
+`Message` — a status record for an asynchronous job. The reporting was designed
+for a queue and then the work was run inline anyway.
