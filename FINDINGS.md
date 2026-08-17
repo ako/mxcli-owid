@@ -399,3 +399,160 @@ green build and a `ClassNotFoundException`.
 returns `rows=25 first=Afghanistan le=61.454`, and clicking *Refresh from OWID*
 logs a second `RefreshRun` of 13,760 observations. Both DuckDB routes work from
 the declared dependency alone.
+
+## 22. Vega warnings: a bound-but-loading attribute is not "no data"
+
+Two distinct problems behind a wall of console warnings.
+
+**`The input spec uses Vega-Lite v5, but the current version is v6.4.3`** — the
+pack bundles `vega-lite@6.4.3`; my specs declared the v5 `$schema`. Vega-Lite
+compiles v5 specs under v6 anyway, so everything drew correctly and only warned.
+All seven specs now declare `.../vega-lite/v6.json`.
+
+**`Infinite extent for field "x": [Infinity, -Infinity]`** (and the matching
+*Log scale domain includes zero*) — an extent computed over **zero rows**. Not a
+data bug: measured 19 warnings on cold load and **0** after any re-render, so it
+was one transient first paint before the data arrived.
+
+Cause is in the widget:
+
+```ts
+if (!parsedData.value) { return parsedSpec.value; }   // embeds with NO data
+```
+
+`chartData?.status === "available" ? chartData.value : undefined` collapses two
+different states into `undefined` — *no data attribute bound* (legal: the URL
+form, where the spec carries its own `data.url`) and *attribute bound but still
+loading*. The second must wait; embedding then hands Vega an empty dataset and
+it warns once per encoded field.
+
+Fixed by distinguishing them:
+
+```ts
+const awaitingData = chartData !== undefined && chartData.status !== "available";
+...
+if (!hostRef.current || !resolvedSpec || awaitingData) { return; }
+```
+
+**Verified:** 0 warnings on cold load, 0 after Apply, mark counts unchanged
+(255/99/27/333/217/243/202). Worth pushing upstream — it affects every
+attribute-fed chart in the pack, not just this app.
+
+## 23. Dark OS made the table black-on-black; Datagrid 2 has no `<th>`/`<td>`
+
+Reported as "table is unreadable, black on black" — and invisible to me, because
+Playwright defaults to `colorScheme: light` and every screenshot I had taken was
+light. Reproduced immediately with `colorScheme: 'dark'`.
+
+Two compounding causes:
+
+**The theme followed the OS.** `mxcli theme apply` defaults to
+`--variant auto`, which ships both palettes and follows `prefers-color-scheme`.
+Under a dark OS, Atlas painted `.widget-datagrid-grid` at `rgb(22,27,34)` while
+this stylesheet kept Industry's dark ink `rgb(29,31,32)` — a contrast ratio of
+about **1.0**. Industry is a light-only design, so the fix is to stop it
+switching at all:
+
+```bash
+mxcli theme apply signal -p OwidExplorer.mpr --variant light
+```
+
+That edits the generated block the supported way rather than by hand.
+
+**Datagrid 2 is divs, not a table.** The styling was written as
+`.owid-table th` / `.owid-table td` and matched almost nothing: the widget emits
+`<div class="th">` / `<div class="td">` inside `.widget-datagrid-grid`. Probing
+computed styles showed `th` resolving to `null` — the tell. Selectors are now
+`.owid-table .th` / `.owid-table .td`, and the ground and ink are stated
+explicitly rather than inherited, so the table survives whatever palette is
+around it. Right-alignment needs `justify-content: flex-end` as well as
+`text-align`, since the cells are flex containers.
+
+**Verified** by measuring contrast in both schemes, identical in each:
+body text **14.79:1**, headers **4.52:1** — both pass WCAG AA.
+
+**Method note:** this class of bug is invisible to a default headless run.
+Render at `colorScheme: 'dark'` as well as light before calling a UI done.
+
+## 24. Task queues on call activities: the SDK setters exist but nothing wires them
+
+Mendix can run **both** a *Call microflow* and a *Call Java action* activity on
+a task queue — it is a property on the call activity, not a separate construct.
+MDL exposes it on **neither**. My earlier note that "MDL cannot mark a call as
+queued" was right about the language and wrong about the cause: this is not a
+missing capability in mxcli, it is unwired plumbing, and it is missing on both
+activities equally.
+
+What is actually there, checked layer by layer:
+
+| Layer | State |
+| --- | --- |
+| `CREATE QUEUE Mod.Name (Parallelism: n, ClusterWide: b)` | **works** — `createQueueStatement`, `MDLDomainModel.g4:345` |
+| `MicroflowCall.SetQueueQualifiedName(string)` | **generated** — `modelsdk/gen/microflows/types.go:7738` |
+| `MicroflowCall.SetQueueSettings(element)` | **generated** — same file, 7728 |
+| `JavaActionCallAction.SetQueueQualifiedName` | **generated** — 6019 |
+| Anything calling those setters | **nothing** — `grep -rn SetQueueQualifiedName --include=*.go .` outside `modelsdk/gen` returns zero hits |
+| `callMicroflowStatement` grammar | **no queue clause** — `MDLMicroflow.g4:358` |
+| `callJavaActionStatement` grammar | **no queue clause** — `MDLMicroflow.g4:367` |
+| Queues elsewhere in MDL | catalog **read only** — `buildQueues` lists `Queues$Queue` units for SHOW/DESCRIBE |
+
+Both call rules are identical in shape, and the only optional trailing clause on
+either is `onErrorClause`:
+
+```antlr
+callMicroflowStatement
+    : (VARIABLE EQUALS)? CALL MICROFLOW   qualifiedName LPAREN callArgumentList? RPAREN onErrorClause? ;
+callJavaActionStatement
+    : (VARIABLE EQUALS)? CALL JAVA ACTION qualifiedName LPAREN callArgumentList? RPAREN onErrorClause? ;
+```
+
+So the model-write side is already generated and reachable; what is missing is a
+grammar clause on each and one setter call apiece. Something like:
+
+```sql
+CALL MICROFLOW   Owid.ACT_RefreshFromOwid ()        IN QUEUE Owid.RefreshQueue;
+CALL JAVA ACTION Owid.RefreshOwidData (BaseUrl = …) IN QUEUE Owid.RefreshQueue;
+```
+
+The feature matrix marks *Task queue* as `N` across every backend, which reads
+as "not implemented at all" and undersells how close it is.
+
+### What works today instead
+
+The runtime API is fully reachable from a Java action, which MDL *can* author.
+Verified against `com.mendix.public-api.jar`:
+
+```java
+ActionCallBuilder.executeInBackground(IContext ctx, String queueName)
+ActionCallBuilder.executeInBackground(IContext ctx, String queueName, Date when)
+ActionCallBuilder.withExponentialRetry(int, Duration, Duration)
+```
+
+This gives queueing *and* retry, which the activity property does not offer.
+
+**A Java action can be queued directly** — no wrapper microflow. Generated Java
+actions extend `UserAction<R>` (confirmed: `RefreshOwidData extends
+UserAction<Long>`), and `Core.userActionCall(String)` returns a
+`UserActionCallBuilder extends ActionCallBuilder`, so:
+
+```java
+Core.userActionCall("Owid.RefreshOwidData")
+    .withParams(baseUrl, yearFrom, yearTo)
+    .withExponentialRetry(5, Duration.ofSeconds(2), Duration.ofMinutes(2))
+    .executeInBackground(ctx, "Owid.RefreshQueue");
+```
+
+That is the better shape here: the queue runs the actual worker rather than a
+wrapper microflow whose only job is to call it. `Core.microflowCall(...)` is the
+equivalent when the unit of work really is a microflow.
+
+### Why this app should use it
+
+`ASU_Seed` is the `AfterStartupMicroflow` and runs the whole DuckDB extract
+**synchronously**, so first boot blocks for ~15 s with the app unavailable. The
+*Refresh from OWID* button likewise holds an HTTP request for the full extract,
+and a single CDN hiccup fails the load with no retry.
+
+`RefreshRun` already carries `StartedAt` / `CompletedAt` / `Succeeded` /
+`Message` — a status record for an asynchronous job. The reporting was designed
+for a queue and then the work was run inline anyway.

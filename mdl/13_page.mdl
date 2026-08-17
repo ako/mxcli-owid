@@ -83,7 +83,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         selection: Selection,
         onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "table"},
   "width": "container",
   "height": 430,
@@ -144,7 +144,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         selection: Selection,
         onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "table"},
   "width": "container",
   "height": 430,
@@ -198,7 +198,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         renderer: 'svg',
         showActions: false,
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "table"},
   "width": "container",
   "height": 220,
@@ -241,7 +241,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         renderer: 'svg',
         showActions: false,
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "width": "container",
   "height": 300,
   "background": null,
@@ -291,7 +291,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         selection: Selection,
         onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "table"},
   "width": "container",
   "height": 300,
@@ -345,7 +345,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         selection: Selection,
         onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "table"},
   "width": "container",
   "height": 260,
@@ -398,7 +398,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         selection: Selection,
         onClick: MICROFLOW Owid.ACT_ChartClick(State: $currentObject),
         spec: '{
-  "$schema": "https://vega.github.io/schema/vega-lite/v5.json",
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
   "data": {"name": "table"},
   "background": null,
   "config": {
