@@ -108,8 +108,12 @@ try {
 
                 com.mendix.systemwideinterfaces.core.IMendixObject obs =
                     com.mendix.core.Core.instantiate(ctx, "Owid.Observation");
-                obs.setValue(ctx, "Year", Integer.valueOf(rs.getInt(5)));
+                int yr = rs.getInt(5);
+                obs.setValue(ctx, "Year", Integer.valueOf(yr));
                 obs.setValue(ctx, "CountryName", cname);
+                // Synthetic key: Observation is keyed on country AND year, and
+                // an OData key must be a single unique attribute.
+                obs.setValue(ctx, "RowKey", cname + "|" + yr);
                 obs.setValue(ctx, "IsoNumeric", Integer.valueOf(isoNum));
                 obs.setValue(ctx, "Region", region);
                 obs.setValue(ctx, "Owid.Observation_Country", country.getId());
