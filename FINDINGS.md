@@ -474,12 +474,14 @@ body text **14.79:1**, headers **4.52:1** — both pass WCAG AA.
 **Method note:** this class of bug is invisible to a default headless run.
 Render at `colorScheme: 'dark'` as well as light before calling a UI done.
 
-## 24. Queued sub-microflow calls: the SDK setter exists but nothing wires it
+## 24. Task queues on call activities: the SDK setters exist but nothing wires them
 
-Mendix supports running a **Call microflow** activity on a task queue — it is a
-property on the call activity, not a separate construct. My earlier note that
-"MDL cannot mark a call as queued" was right about the language and wrong about
-the cause: this is not a missing capability in mxcli, it is unwired plumbing.
+Mendix can run **both** a *Call microflow* and a *Call Java action* activity on
+a task queue — it is a property on the call activity, not a separate construct.
+MDL exposes it on **neither**. My earlier note that "MDL cannot mark a call as
+queued" was right about the language and wrong about the cause: this is not a
+missing capability in mxcli, it is unwired plumbing, and it is missing on both
+activities equally.
 
 What is actually there, checked layer by layer:
 
@@ -490,14 +492,26 @@ What is actually there, checked layer by layer:
 | `MicroflowCall.SetQueueSettings(element)` | **generated** — same file, 7728 |
 | `JavaActionCallAction.SetQueueQualifiedName` | **generated** — 6019 |
 | Anything calling those setters | **nothing** — `grep -rn SetQueueQualifiedName --include=*.go .` outside `modelsdk/gen` returns zero hits |
-| `callMicroflowStatement` grammar | no queue clause (`MDLMicroflow.g4:358`) |
+| `callMicroflowStatement` grammar | **no queue clause** — `MDLMicroflow.g4:358` |
+| `callJavaActionStatement` grammar | **no queue clause** — `MDLMicroflow.g4:367` |
 | Queues elsewhere in MDL | catalog **read only** — `buildQueues` lists `Queues$Queue` units for SHOW/DESCRIBE |
 
+Both call rules are identical in shape, and the only optional trailing clause on
+either is `onErrorClause`:
+
+```antlr
+callMicroflowStatement
+    : (VARIABLE EQUALS)? CALL MICROFLOW   qualifiedName LPAREN callArgumentList? RPAREN onErrorClause? ;
+callJavaActionStatement
+    : (VARIABLE EQUALS)? CALL JAVA ACTION qualifiedName LPAREN callArgumentList? RPAREN onErrorClause? ;
+```
+
 So the model-write side is already generated and reachable; what is missing is a
-grammar clause and one setter call. Something like:
+grammar clause on each and one setter call apiece. Something like:
 
 ```sql
-CALL MICROFLOW Owid.ACT_RefreshFromOwid () IN QUEUE Owid.RefreshQueue;
+CALL MICROFLOW   Owid.ACT_RefreshFromOwid ()        IN QUEUE Owid.RefreshQueue;
+CALL JAVA ACTION Owid.RefreshOwidData (BaseUrl = …) IN QUEUE Owid.RefreshQueue;
 ```
 
 The feature matrix marks *Task queue* as `N` across every backend, which reads
