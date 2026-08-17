@@ -399,3 +399,41 @@ green build and a `ClassNotFoundException`.
 returns `rows=25 first=Afghanistan le=61.454`, and clicking *Refresh from OWID*
 logs a second `RefreshRun` of 13,760 observations. Both DuckDB routes work from
 the declared dependency alone.
+
+## 22. Vega warnings: a bound-but-loading attribute is not "no data"
+
+Two distinct problems behind a wall of console warnings.
+
+**`The input spec uses Vega-Lite v5, but the current version is v6.4.3`** — the
+pack bundles `vega-lite@6.4.3`; my specs declared the v5 `$schema`. Vega-Lite
+compiles v5 specs under v6 anyway, so everything drew correctly and only warned.
+All seven specs now declare `.../vega-lite/v6.json`.
+
+**`Infinite extent for field "x": [Infinity, -Infinity]`** (and the matching
+*Log scale domain includes zero*) — an extent computed over **zero rows**. Not a
+data bug: measured 19 warnings on cold load and **0** after any re-render, so it
+was one transient first paint before the data arrived.
+
+Cause is in the widget:
+
+```ts
+if (!parsedData.value) { return parsedSpec.value; }   // embeds with NO data
+```
+
+`chartData?.status === "available" ? chartData.value : undefined` collapses two
+different states into `undefined` — *no data attribute bound* (legal: the URL
+form, where the spec carries its own `data.url`) and *attribute bound but still
+loading*. The second must wait; embedding then hands Vega an empty dataset and
+it warns once per encoded field.
+
+Fixed by distinguishing them:
+
+```ts
+const awaitingData = chartData !== undefined && chartData.status !== "available";
+...
+if (!hostRef.current || !resolvedSpec || awaitingData) { return; }
+```
+
+**Verified:** 0 warnings on cold load, 0 after Apply, mark counts unchanged
+(255/99/27/333/217/243/202). Worth pushing upstream — it affects every
+attribute-fed chart in the pack, not just this app.

@@ -64,6 +64,14 @@ export function VegaChart(props: VegaChartContainerProps): ReactElement {
 
     const dataValue = chartData?.status === "available" ? chartData.value : undefined;
 
+    // A data attribute that is bound but not yet loaded is NOT the same as no
+    // data attribute at all. Embedding while it loads hands Vega an empty
+    // dataset, which computes extents of [Infinity, -Infinity] and warns once
+    // per encoded field before the real data arrives and re-renders. Leaving
+    // chartData unbound stays legal — that is the URL form, where the spec
+    // carries its own data.url and there is nothing to wait for.
+    const awaitingData = chartData !== undefined && chartData.status !== "available";
+
     // The spec is static and the data is not, so they are parsed apart. Only the
     // data changes between renders, and re-parsing a spec on every model update
     // would be wasted work.
@@ -98,7 +106,7 @@ export function VegaChart(props: VegaChartContainerProps): ReactElement {
             setError(message);
             return;
         }
-        if (!hostRef.current || !resolvedSpec) {
+        if (!hostRef.current || !resolvedSpec || awaitingData) {
             return;
         }
 
@@ -140,7 +148,7 @@ export function VegaChart(props: VegaChartContainerProps): ReactElement {
         return () => {
             disposed = true;
         };
-    }, [resolvedSpec, renderer, showActions, parsedSpec.error, parsedData.error]);
+    }, [resolvedSpec, renderer, showActions, awaitingData, parsedSpec.error, parsedData.error]);
 
     // Finalize on unmount only. Vega registers listeners and, with the canvas
     // renderer, holds a backing surface; dropping the node without finalizing
