@@ -48,12 +48,6 @@ CREATE OR REPLACE PAGE Owid.Dashboard
         CHECKBOX cbOceania (Label: 'Oceania', Attribute: ShowOceania,
           OnChange: MICROFLOW Owid.ACT_Apply(State: $currentObject))
       }
-      -- mxcli silently drops OnChange on combobox, radiobuttons and checkbox
-      -- (FINDINGS #14) — only textbox and actionbutton keep their action. So
-      -- topic and region changes are applied by this button rather than on
-      -- change. The year box and the year buttons update immediately.
-      ACTIONBUTTON btnApply (Caption: 'Apply',
-        Action: MICROFLOW Owid.ACT_Apply(State: $currentObject), ButtonStyle: Primary)
     }
 
     CONTAINER yearBar (Class: 'owid-yearbar') {

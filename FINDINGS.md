@@ -225,7 +225,7 @@ Switching from the mockup's 27-country sample to all OWID countries:
 
 **Verified:** 215 countries, 13,760 rows, coverage as above.
 
-## 14. mxcli silently drops OnChange on combobox, radiobuttons and checkbox
+## 14. ~~mxcli silently drops OnChange on combobox, radiobuttons and checkbox~~ — FIXED upstream, see #26
 
 The dashboard's controls did nothing. The MDL parsed, `mxcli check` passed, and
 `exec` reported success — but `DESCRIBE PAGE` showed the property was never
@@ -615,3 +615,37 @@ Two lessons from their write-up worth carrying:
   invisible from every angle — describe omitted it, check went quiet, the write
   reported success — and only a stored-BSON probe exposed it. My own habit of
   trusting `DESCRIBE` round-trips as proof has exactly this blind spot.
+
+## 26. FIXED: OnChange now survives on combobox, radiobuttons and checkbox
+
+`ako/mxcli` main at `443e80d` fixes #14, and the **Apply-button workaround has
+been removed from the dashboard** — the controls are native again.
+
+Two commits did it, and the second is the more interesting one:
+
+- `622386c fix(check): an action slot is authorable by its source, not its
+  storage key` — mapping `onChangeEvent` so that `OnChange:` reached it had
+  made `onChangeEvent:` an accepted MDL property name that the engine never
+  read, so it would be *accepted by check and dropped on write* — the same
+  silent-drop class, one layer up. An action mapping is now authorable by its
+  Source only (`Action`/`OnClick`/`OnChange`), and the storage key is an error
+  that names the spelling that works.
+- `7256062 fix(pages): read a pluggable widget's action back` — `DESCRIBE`
+  could not see a ComboBox's `OnChange`, so **describe → exec deleted it**: the
+  write was already correct, but the read looked only at the built-in
+  `OnChangeAction` slot, which a pluggable widget does not use.
+
+**Verified in three layers**, because the model storing it does not prove the
+browser fires it:
+
+| | result |
+| --- | --- |
+| `DESCRIBE PAGE` round-trip | `OnChange: microflow Owid.ACT_Apply(State: $currentObject)` on **both** combobox and checkbox |
+| Runtime, combobox, no Apply pressed | topic switched — figure title and note both changed |
+| Runtime, after removing the button | `Apply button present: 0`; topic still switches, year still steps, 0 Vega warnings, all seven figures drawing |
+
+That second commit is a direct hit on the habit flagged in #25: I had been
+treating a `DESCRIBE` round-trip as proof. Here `DESCRIBE` was itself the
+lossy layer — a correct write, read back incorrectly, so round-tripping the
+output *destroyed* the thing it was meant to verify. A round trip proves the
+pair agree, not that either is right.
