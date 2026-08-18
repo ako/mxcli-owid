@@ -110,6 +110,18 @@ CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.LeRow (
   Ex:       Decimal
 );
 
+/*
+ * The answer to $count, which is a different question from the rows.
+ *
+ * $count asks the size of the whole filtered SET, not of the page, so it needs
+ * its own statement -- the same base and the same WHERE, without the LIMIT.
+ * One row, one number.
+ */
+@Position(1300, 700)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.CountRow (
+  N: Long
+);
+
 @Position(900, 700)
 CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.PlaceRow (
   Place: String(120),
@@ -168,4 +180,12 @@ BEGIN
     PARAMETER keyval: String DEFAULT ''
     RETURNS Owid.PlaceRow
     MAP (place AS Place, iso3 AS Iso3, kind AS Kind);
+
+  -- One shape serves all three resources' counts, because the only thing that
+  -- differs between them is the statement, and the statement is dynamic.
+  QUERY RowCount
+    SQL $$SELECT 0 AS n WHERE {keyval} <> {keyval}$$
+    PARAMETER keyval: String DEFAULT ''
+    RETURNS Owid.CountRow
+    MAP (n AS N);
 END;

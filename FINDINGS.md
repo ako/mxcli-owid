@@ -744,25 +744,101 @@ Not "the widget shows five rows" — checked at the wire, per option:
 | `$orderby=ex desc` | Monaco 86.372, San Marino 85.706, Hong Kong 85.511 |
 | `$orderby=location,year` | two terms |
 | `$select=place,iso3` | narrowed response |
-| `$count` | **404 non-countable** — the declared contract, honoured |
+| `$count=true` | `@odata.count`, filter-aware — see #29b |
 | `$expand=foo` | 400 from Mendix, before the microflow |
 | unknown field in `$filter` | 400 from Mendix, before the microflow |
 | `year add 1 eq 2001` | **500** — see #30 |
 
-## 29. `UsePaging` is refused on a read-microflow resource (CE7230)
+## 29. Two kinds of paging; only the server-side one is refused (CE7230)
 
-`Cannot use paging in combination with a Read microflow.` Correct, and worth
-stating plainly: the platform cannot page an answer it did not build. The cap
-has to live in the microflow — `MaxTop` in `Parse`, and the `$top` each caller
-asks for. `PageSize` must be dropped from the published entity, not set to
-something large.
+They are not alternatives to each other, and the first draft of this note
+conflated them.
 
-The same applies to `Countable`. `Yes` (the default) obliges the read microflow
-to take `$Response: System.ODataResponse` and set `Count`, and answering that
-honestly means a second query over the same parquet. These resources declare
-`Countable: No`, which drops the `$Response` parameter requirement — `$Request`
-alone is still allowed and is what carries the query string. `/$count` then
-404s with `non-countable`, which is the truth rather than a wrong number.
+**Server-side paging** — `UsePaging: Yes` with a `PageSize`. Mendix chunks the
+answer itself and hands back `@odata.nextLink`. It works on a source-read
+resource; dropping `Countries` (215 rows) from `PageSize: 300` to `100` shows it
+engaging:
+
+```
+GET /odata/owid/Countries       -> 100 rows, @odata.nextLink: .../Countries?$skip=100
+GET .../Countries?$skip=100     -> 100 rows, @odata.nextLink: .../Countries?$skip=200
+GET .../Countries?$top=5        ->   5 rows, no nextLink
+```
+
+On a **read-microflow** resource it is refused outright:
+
+```
+[error] [CE7230] "Cannot use paging in combination with a Read microflow."
+```
+
+and it fires on `UsePaging: Yes` **alone, with no `PageSize` set at all** —
+verified, not assumed. That is correct rather than a limitation: the platform
+cannot chunk an answer it did not build, and `System.ODataResponse` has exactly
+one attribute —
+
+```
+create or modify non-persistent entity System.ODataResponse ( Count: Long );
+```
+
+— so there is nowhere to put a `nextLink` even if it wanted to. `UsePaging`
+must be `No`, and it is not a fallback, it is the only legal value.
+
+**App-controlled paging** — `$top` and `$skip` — is fully available and is what
+these resources implement. `Parse` turns them into `LIMIT`/`OFFSET` clamped to
+`MaxTop`. Walking a filtered set, warm:
+
+```
+page 1: 40 rows of 101 total, 588 ms   ages 0..39
+page 2: 40 rows,              273 ms   ages 40..79
+page 3: 21 rows,              272 ms   ages 80..100
+```
+
+Worth noticing that Mendix's own server-side `nextLink` is literally
+`?$skip=100` — the platform implements its paging *in terms of* the option the
+microflow parses. The only thing a consumer loses on a read-microflow resource
+is the server volunteering the next URL.
+
+## 29b. `$count` is what makes app-controlled paging usable — and it works
+
+`Countable: No` was the wrong call. Under it, `?$count=true` returns **404
+Resource not found**, and more importantly a client has no way to know how far
+to page, or to notice that an unbounded `GET` came back truncated at
+`DefaultTop`. That last one is the pack's own failure mode arriving by the back
+door: 500 rows of 5.8 million, under a 200, with nothing saying so.
+
+`Countable: Yes` plus a real count fixes it. Three things had to be true, and
+all three are:
+
+**The count can be paid for only when asked.** Leaving `Count` unset when the
+client did not ask is tolerated — no `@odata.count` in the response, no error.
+So the second pass over the parquet happens on `$count=true` and not otherwise.
+
+**It has to be a second statement, not a second use of the first.** `$count` is
+the size of the filtered *set*, not of the page, so the count query takes the
+same base and the same `WHERE` **without** the `ORDER BY … LIMIT`. Counting the
+page would just return the rows already in hand.
+
+**There are two spellings and `Parse` only sees one.** `WantsCount` reads
+`$count=true` out of the query string. `/Places/$count` is a path segment with
+no query option at all, so `WantsCount` is false, the microflow skips the count,
+and Mendix serves its own unset default — which is **`-1` under a 200**. The
+condition has to be:
+
+```
+IF $Q/WantsCount OR contains($Request/Uri, '/$count') THEN
+```
+
+Measured after the fix:
+
+| | |
+| --- | --- |
+| `/Places/$count` | `261` (was `-1`) |
+| `/LifeTable/$count` | `5852142`, 1.24 s |
+| `?$top=3&$count=true` | `@odata.count: 261`, 3 rows, 0.76 s |
+| `…&$count=true&$filter=kind eq 'Country/Area'` | `@odata.count: 237` — filter-aware |
+| `?$count=true`, no `$top` | `returned 500 of @odata.count 5852142` |
+
+That last line is the whole point: truncation is now visible to the client.
 
 ## 30. `RejectUnsupported = true` throws — the pattern's `IF Rejected` is dead
 

@@ -1,15 +1,41 @@
--- Stage 20: the read microflows, and the one thing they must be able to do
--- that MDL has no verb for.
+-- Stage 20: the read microflows.
 --
 -- Mendix publishes a non-persistable entity happily and then applies NONE of
--- the query options to the answer. $filter, $orderby, $top, $skip and the key
--- lookup all arrive on the URI and all stay there; whatever the microflow
--- returns is what the client gets. That is not a 500 and not an empty grid --
--- it is a 200 with the wrong rows, which no client can detect. The pushdown
--- pack installed in stage 19a exists for exactly this, and these three
+-- the query options to the answer. $filter, $orderby, $top, $skip, $count and
+-- the key lookup all arrive on the URI and all stay there; whatever the
+-- microflow returns is what the client gets. That is not a 500 and not an
+-- empty grid -- it is a 200 with the wrong rows, which no client can detect.
+-- The mendix-odata-pushdown pack exists for exactly this, and these three
 -- microflows are its splice-style caller: parse the URI once, concatenate the
--- fragments onto the base statement, run it.
-
+-- fragments onto a base statement, run it.
+--
+--
+-- PAGING, AND WHICH KIND OF IT THESE RESOURCES HAVE
+--
+-- There are two, and they are not alternatives to each other:
+--
+--   Server-side  -- UsePaging: Yes with a PageSize. Mendix chunks the answer
+--     itself and hands back @odata.nextLink so the client can walk it. It is
+--     refused here: CE7230, "Cannot use paging in combination with a Read
+--     microflow", and it fires on UsePaging: Yes alone, with no PageSize set.
+--     That is correct rather than a limitation -- the platform cannot chunk an
+--     answer it did not build, and System.ODataResponse carries exactly one
+--     field, Count, with nowhere to put a nextLink even if it wanted to.
+--
+--   App-controlled -- $top and $skip. Fully available on a read-microflow
+--     resource, and what these three implement: Parse turns them into LIMIT and
+--     OFFSET, clamped to MaxTop. Worth noting that Mendix's own server-side
+--     nextLink is literally `?$skip=100`, so the platform implements its paging
+--     in terms of the same option -- the only thing a consumer loses here is
+--     the server volunteering the next URL.
+--
+-- Which is why $count matters more than it looks. Without it a client has no
+-- way to know how far to page, and no way to notice that an unbounded GET came
+-- back truncated at DefaultTop. With it, `@odata.count` against `value.length`
+-- makes truncation visible. So these resources are Countable: Yes and answer
+-- it for real -- see the count block at the end of each flow.
+--
+--
 -- FAILING A REQUEST THE PARSER COULD NOT TRANSLATE -- and why there is no
 -- code here for it.
 --
@@ -71,7 +97,8 @@ $$;
 -- request. DefaultTop is far smaller: an unfiltered GET is somebody exploring
 -- the service, not a chart, and it should return a page rather than a file.
 CREATE OR REPLACE MICROFLOW Owid.DS_LifeTable (
-  $Request: System.HttpRequest
+  $Request: System.HttpRequest,
+  $Response: System.ODataResponse
 )
 RETURNS List of Owid.LtRow AS $Rows
 BEGIN
@@ -87,20 +114,44 @@ BEGIN
     RejectUnsupported = true
   );
 
-
-  @position(560, 200)
+  @position(320, 200)
   $PathKey = CALL JAVA ACTION Owid.PathKey (Uri = $Request/Uri);
 
-  @position(720, 200)
-  declare $Sql String = @Owid.LtSql
-    + ' WHERE ({keyval} = '''' OR t.row_key = {keyval})'
-    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ')
-    + $Q/OrderBySql;
+  -- Built once and used twice: the rows take it with the ORDER BY and LIMIT,
+  -- the count takes it without. A count of the page rather than of the set
+  -- would just be the number of rows already in hand.
+  @position(500, 200)
+  declare $Where String = ' WHERE ({keyval} = '''' OR t.row_key = {keyval})'
+    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ');
 
-  @position(880, 200)
+  @position(680, 200)
+  declare $Sql String = @Owid.LtSql + $Where + $Q/OrderBySql;
+
+  @position(860, 200)
   $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.LifeTable DYNAMIC $Sql (keyval = $PathKey);
 
+  -- Only when asked. A count is a second pass over the same parquet, and no
+  -- figure on the dashboard wants one -- but a data grid paging this resource
+  -- does, and it is the only way a client can tell a full answer from one
+  -- truncated at DefaultTop.
+  --
+  -- Two spellings ask for it and Parse only sees one: ?$count=true is a query
+  -- option, /LifeTable/$count is a path segment with no query option at all.
+  -- Miss the second and Mendix serves its own unset default, which is -1 under
+  -- a 200. (FINDINGS #29b.)
   @position(1040, 200)
+  IF $Q/WantsCount OR contains($Request/Uri, '/$count') THEN
+    @position(1100, 340)
+    declare $CSql String = 'SELECT count(*) AS n FROM (' + @Owid.LtSql + $Where + ') c';
+    @position(1300, 340)
+    $CRows = EXECUTE DATABASE QUERY Owid.OwidDuck.RowCount DYNAMIC $CSql (keyval = $PathKey);
+    @position(1500, 340)
+    $CHead = HEAD($CRows);
+    @position(1660, 340)
+    CHANGE $Response (Count = $CHead/N);
+  END IF;
+
+  @position(1900, 200)
   RETURN $Rows;
 END;
 
@@ -110,7 +161,8 @@ END;
 -- 261 places x 151 years x 3 sexes is 118,000 rows, so this one is capped
 -- lower: every figure on the page asks for a handful of places.
 CREATE OR REPLACE MICROFLOW Owid.DS_LifeExpectancy (
-  $Request: System.HttpRequest
+  $Request: System.HttpRequest,
+  $Response: System.ODataResponse
 )
 RETURNS List of Owid.LeRow AS $Rows
 BEGIN
@@ -126,20 +178,32 @@ BEGIN
     RejectUnsupported = true
   );
 
-
-  @position(560, 200)
+  @position(320, 200)
   $PathKey = CALL JAVA ACTION Owid.PathKey (Uri = $Request/Uri);
 
-  @position(720, 200)
-  declare $Sql String = @Owid.LeSql
-    + ' WHERE ({keyval} = '''' OR t.row_key = {keyval})'
-    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ')
-    + $Q/OrderBySql;
+  @position(500, 200)
+  declare $Where String = ' WHERE ({keyval} = '''' OR t.row_key = {keyval})'
+    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ');
 
-  @position(880, 200)
+  @position(680, 200)
+  declare $Sql String = @Owid.LeSql + $Where + $Q/OrderBySql;
+
+  @position(860, 200)
   $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.LifeExpectancy DYNAMIC $Sql (keyval = $PathKey);
 
   @position(1040, 200)
+  IF $Q/WantsCount OR contains($Request/Uri, '/$count') THEN
+    @position(1100, 340)
+    declare $CSql String = 'SELECT count(*) AS n FROM (' + @Owid.LeSql + $Where + ') c';
+    @position(1300, 340)
+    $CRows = EXECUTE DATABASE QUERY Owid.OwidDuck.RowCount DYNAMIC $CSql (keyval = $PathKey);
+    @position(1500, 340)
+    $CHead = HEAD($CRows);
+    @position(1660, 340)
+    CHANGE $Response (Count = $CHead/N);
+  END IF;
+
+  @position(1900, 200)
   RETURN $Rows;
 END;
 
@@ -148,11 +212,10 @@ END;
 -- ask for whole -- DefaultTop covers it and MaxTop barely matters.
 --
 -- It also exercises the key path: /Places('Japan') and ?$filter=place eq
--- 'Japan' are the two spellings a Mendix client re-reads a held row by, and
--- both arrive here as $Q/FilterSql because Parse resolves them to the same
--- thing.
+-- 'Japan' are the two spellings a Mendix client re-reads a held row by.
 CREATE OR REPLACE MICROFLOW Owid.DS_Places (
-  $Request: System.HttpRequest
+  $Request: System.HttpRequest,
+  $Response: System.ODataResponse
 )
 RETURNS List of Owid.PlaceRow AS $Rows
 BEGIN
@@ -168,19 +231,31 @@ BEGIN
     RejectUnsupported = true
   );
 
-
-  @position(560, 200)
+  @position(320, 200)
   $PathKey = CALL JAVA ACTION Owid.PathKey (Uri = $Request/Uri);
 
-  @position(720, 200)
-  declare $Sql String = @Owid.PlaceSql
-    + ' WHERE ({keyval} = '''' OR t.place = {keyval})'
-    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ')
-    + $Q/OrderBySql;
+  @position(500, 200)
+  declare $Where String = ' WHERE ({keyval} = '''' OR t.place = {keyval})'
+    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ');
 
-  @position(880, 200)
+  @position(680, 200)
+  declare $Sql String = @Owid.PlaceSql + $Where + $Q/OrderBySql;
+
+  @position(860, 200)
   $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.Places DYNAMIC $Sql (keyval = $PathKey);
 
   @position(1040, 200)
+  IF $Q/WantsCount OR contains($Request/Uri, '/$count') THEN
+    @position(1100, 340)
+    declare $CSql String = 'SELECT count(*) AS n FROM (' + @Owid.PlaceSql + $Where + ') c';
+    @position(1300, 340)
+    $CRows = EXECUTE DATABASE QUERY Owid.OwidDuck.RowCount DYNAMIC $CSql (keyval = $PathKey);
+    @position(1500, 340)
+    $CHead = HEAD($CRows);
+    @position(1660, 340)
+    CHANGE $Response (Count = $CHead/N);
+  END IF;
+
+  @position(1900, 200)
   RETURN $Rows;
 END;
