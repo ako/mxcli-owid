@@ -152,8 +152,39 @@ statement held in a constant, run it through the connector with
 `EXECUTE DATABASE QUERY … DYNAMIC`.
 
 The three published resources are `LifeTable`, `LifeExpectancy` and `Places`,
-all non-persistable, all `Countable: No` and `UsePaging: No` — the caps live in
-the microflow, because the platform cannot page an answer it did not build.
+all non-persistable.
+
+### Paging
+
+There are two kinds and only one of them is available here.
+
+**Server-side paging** (`UsePaging: Yes` + `PageSize`, where Mendix chunks the
+answer and hands back `@odata.nextLink`) is refused on a read-microflow
+resource — CE7230, and it fires on `UsePaging: Yes` alone with no `PageSize`
+set. That is right rather than a limitation: the platform cannot chunk an
+answer it did not build, and `System.ODataResponse` has one attribute, `Count`,
+with nowhere to put a link.
+
+**App-controlled paging** — `$top` and `$skip` — is fully available and is what
+these resources implement: `Parse` turns them into `LIMIT`/`OFFSET` clamped to
+`MaxTop`. Mendix's own server-side `nextLink` is literally `?$skip=100`, so this
+is the same mechanism underneath; the only thing lost is the server volunteering
+the next URL.
+
+`$count` is what makes that usable, so the resources are `Countable: Yes` and
+answer it for real — the same base and `WHERE` without the `LIMIT`, run only
+when the client asked:
+
+```
+GET /odata/live/LifeTable/$count                  -> 5852142
+GET /odata/live/Places?$top=3&$count=true         -> @odata.count 261, 3 rows
+GET …&$count=true&$filter=kind eq 'Country/Area'  -> @odata.count 237
+GET /odata/live/LifeTable?$count=true             -> 500 rows of @odata.count 5852142
+```
+
+The last line is the point: without `$count`, an unbounded `GET` comes back
+truncated at `DefaultTop` with nothing saying so — 500 rows of 5.8 million,
+under a 200. With it, truncation is visible to the client.
 
 **TAB 01 goes the other way on purpose**: the same connection and the same
 parquet, read straight into a Mendix data grid with no HTTP and no OData. The
@@ -186,11 +217,28 @@ curl "http://localhost:8080/odata/live/Places('Japan')"
 curl "http://localhost:8080/odata/live/LifeTable?\$filter=location%20eq%20%27Japan%27%20and%20year%20eq%202000%20and%20age%20le%202&\$orderby=age"
 ```
 
-See `FINDINGS.md` #28–#35 for what was measured and the four traps: paging is
-refused on a read-microflow resource (#29), the pack's documented
-`IF Rejected` branch is unreachable (#30), the key from the path segment never
-reaches a splice caller (#31), and the UN scales three rate columns three
-different ways (#32).
+See `FINDINGS.md` #28–#35 for what was measured and the four traps:
+*server-side* paging is refused on a read-microflow resource while `$top`/`$skip`
+are not (#29, #29b), the pack's documented `IF Rejected` branch is unreachable
+(#30), the key from the path segment never reaches a splice caller (#31), and
+the UN scales three rate columns three different ways (#32).
+
+## Reading it in Studio Pro
+
+The module is foldered by architecture, because that is the one thing worth
+seeing first:
+
+```
+Board 1 - stored/   Load/  Dashboard/  Api/
+Board 2 - live/     Resources/  Dashboard/
+DuckDB/             the connection both boards reach through
+OData pushdown/     the skill pack's actions, kept apart because they are not
+                    this app's code and are replaced wholesale on update
+```
+
+Entities are not in there: Mendix keeps them in the domain model rather than the
+document tree. `mdl/25_folders.mdl` is the placement, so it survives a rebuild
+from the scripts.
 
 ---
 

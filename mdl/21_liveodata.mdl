@@ -13,14 +13,26 @@
 -- the platform provides. Getting one wrong is not a build error, it is a 200
 -- with the wrong rows.
 --
---   Countable: No -- the microflow does not count. $count would need a second
---     query over the same parquet to answer honestly, and no figure on the
---     page asks. Declaring No also drops the $Response parameter requirement,
---     which is why these microflows take $Request alone.
+--   UsePaging: No -- not a choice. CE7230 refuses server-side paging on a
+--     read-microflow resource outright, PageSize or no PageSize, because the
+--     platform cannot chunk an answer it did not build. So there is no
+--     @odata.nextLink here and cannot be: System.ODataResponse carries one
+--     field, Count, and nowhere to put a link.
 --
 --   TopSupported / SkipSupported -- left at Yes because DS_* really do parse
---     $top and $skip and put LIMIT/OFFSET in the statement. If they stopped,
---     these would have to become No the same day.
+--     $top and $skip and put LIMIT/OFFSET in the statement. This is the paging
+--     these resources have, and it is the same mechanism Mendix's own
+--     server-side paging uses underneath -- its nextLink is literally
+--     `?$skip=100`. If the microflows stopped parsing them, these would have to
+--     become No the same day.
+--
+--   Countable: Yes -- and answered for real, by a second statement over the
+--     same base and the same WHERE without the LIMIT. It costs a second pass
+--     over the parquet, so the microflow only runs it when the client actually
+--     asked. It matters more than it looks: without $count a consumer has no
+--     way to know how far to page, and no way to notice that an unbounded GET
+--     came back truncated at DefaultTop. With it, @odata.count against
+--     value.length makes truncation visible.
 --
 --   KEY -- a declared key is a promise that a lookup by it is answered. A
 --     client holding one row re-reads it as ?$filter=rowKey eq '...' entirely
@@ -52,7 +64,7 @@ CREATE OR MODIFY ODATA SERVICE Owid.LiveApi (
     UpdateMode: not_supported,
     DeleteMode: not_supported,
     UsePaging: No,
-    Countable: No
+    Countable: Yes
   )
   expose (
     RowKey   as 'rowKey'   (KEY, Filterable),
@@ -72,7 +84,7 @@ CREATE OR MODIFY ODATA SERVICE Owid.LiveApi (
     UpdateMode: not_supported,
     DeleteMode: not_supported,
     UsePaging: No,
-    Countable: No
+    Countable: Yes
   )
   expose (
     RowKey   as 'rowKey'   (KEY, Filterable),
@@ -90,7 +102,7 @@ CREATE OR MODIFY ODATA SERVICE Owid.LiveApi (
     UpdateMode: not_supported,
     DeleteMode: not_supported,
     UsePaging: No,
-    Countable: No
+    Countable: Yes
   )
   expose (
     Place as 'place' (KEY, Filterable, Sortable),

@@ -1,0 +1,89 @@
+-- Stage 25: put the module in folders.
+--
+-- Forty-three documents in the module root is a wall, and it hides the one
+-- thing worth seeing first: there are two boards here, built on opposite
+-- architectures, and almost every document belongs to one or the other.
+-- The tree says so.
+--
+--   Board 1 - stored/     the copy-then-publish board
+--     Load/               the refresh job that fills the entities
+--     Dashboard/          the page and everything that feeds it
+--     Api/                what it publishes
+--   Board 2 - live/       the nothing-is-stored board
+--     Resources/          the three published resources and their read flows
+--     Dashboard/          the page and the two things Mendix reads itself
+--   DuckDB/               the connection both boards reach through
+--   OData pushdown/       the skill pack's actions, kept apart because they
+--                         are not this app's code and get replaced wholesale
+--                         when the pack updates
+--
+-- The names sort into that order in Studio Pro without numeric prefixes, which
+-- is why they are worded the way they are.
+--
+-- Entities are absent on purpose: Mendix keeps them in the domain model, not
+-- in the document tree, and MOVE ENTITY has no folder form. Enumerations do
+-- have one, so they sit with the board that uses them.
+
+-- ---------------------------------------------------------------- board one
+
+MOVE MICROFLOW Owid.ASU_Seed             TO FOLDER 'Board 1 - stored/Load';
+MOVE MICROFLOW Owid.ACT_RefreshFromOwid  TO FOLDER 'Board 1 - stored/Load';
+MOVE MICROFLOW Owid.ACT_RequestRefresh   TO FOLDER 'Board 1 - stored/Load';
+MOVE JAVA ACTION Owid.RefreshOwidData    TO FOLDER 'Board 1 - stored/Load';
+MOVE CONSTANT Owid.CatalogBaseUrl        TO FOLDER 'Board 1 - stored/Load';
+MOVE CONSTANT Owid.YearFrom              TO FOLDER 'Board 1 - stored/Load';
+MOVE CONSTANT Owid.YearTo                TO FOLDER 'Board 1 - stored/Load';
+
+MOVE PAGE Owid.Dashboard                 TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.DS_ViewState         TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.SUB_FillViewState    TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.DS_TableRows         TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.ACT_Apply            TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.ACT_ChartClick       TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.ACT_YearBack         TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.ACT_YearNext         TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE MICROFLOW Owid.ACT_YearStep         TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE JAVA ACTION Owid.BuildChartJson     TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE JAVA ACTION Owid.JsonField          TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE ENUMERATION Owid.TopicKey           TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE ENUMERATION Owid.Region             TO FOLDER 'Board 1 - stored/Dashboard';
+MOVE ENUMERATION Owid.ScaleType          TO FOLDER 'Board 1 - stored/Dashboard';
+
+MOVE ODATA SERVICE Owid.OwidApi          TO FOLDER 'Board 1 - stored/Api';
+
+-- ---------------------------------------------------------------- board two
+
+MOVE MICROFLOW Owid.DS_LifeTable         TO FOLDER 'Board 2 - live/Resources';
+MOVE MICROFLOW Owid.DS_LifeExpectancy    TO FOLDER 'Board 2 - live/Resources';
+MOVE MICROFLOW Owid.DS_Places            TO FOLDER 'Board 2 - live/Resources';
+MOVE ODATA SERVICE Owid.LiveApi          TO FOLDER 'Board 2 - live/Resources';
+-- The base statements are configuration, and they belong beside the microflows
+-- that concatenate onto them rather than with the connection.
+MOVE CONSTANT Owid.LtSql                 TO FOLDER 'Board 2 - live/Resources';
+MOVE CONSTANT Owid.LeSql                 TO FOLDER 'Board 2 - live/Resources';
+MOVE CONSTANT Owid.PlaceSql              TO FOLDER 'Board 2 - live/Resources';
+
+MOVE PAGE Owid.LiveDashboard             TO FOLDER 'Board 2 - live/Dashboard';
+MOVE MICROFLOW Owid.DS_LiveState         TO FOLDER 'Board 2 - live/Dashboard';
+MOVE MICROFLOW Owid.DS_Ranking           TO FOLDER 'Board 2 - live/Dashboard';
+MOVE JAVA ACTION Owid.NowMillis          TO FOLDER 'Board 2 - live/Dashboard';
+
+-- ------------------------------------------------------------- the connection
+
+MOVE DATABASE CONNECTION Owid.OwidDuck   TO FOLDER 'DuckDB';
+MOVE MICROFLOW Owid.ACT_QueryViaConnector TO FOLDER 'DuckDB';
+MOVE CONSTANT Owid.DuckDbUrl             TO FOLDER 'DuckDB';
+MOVE CONSTANT Owid.DuckDbUser            TO FOLDER 'DuckDB';
+MOVE CONSTANT Owid.DuckDbPassword        TO FOLDER 'DuckDB';
+
+-- ---------------------------------------------------------------- the pack
+--
+-- PathKey is ours, not the pack's, but it is the same job -- reading the OData
+-- request -- and splitting them would put a caller in one folder and the thing
+-- it patches in another.
+
+MOVE JAVA ACTION Owid.Parse              TO FOLDER 'OData pushdown';
+MOVE JAVA ACTION Owid.Key                TO FOLDER 'OData pushdown';
+MOVE JAVA ACTION Owid.FilterNumber       TO FOLDER 'OData pushdown';
+MOVE JAVA ACTION Owid.CallStatement      TO FOLDER 'OData pushdown';
+MOVE JAVA ACTION Owid.PathKey            TO FOLDER 'OData pushdown';
