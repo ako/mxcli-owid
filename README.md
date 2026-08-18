@@ -1,71 +1,124 @@
 # OwidExplorer
 
-Two data-visualization dashboards over **Our World in Data**, built as a Mendix
-app with [mxcli](https://github.com/ako/mxcli). They read the same public
-parquet catalogue through the same DuckDB, and they answer the question "where
-does the data live" in opposite ways — which is the point of having both.
+Three dashboards over **Our World in Data**, built as a Mendix app with
+[mxcli](https://github.com/ako/mxcli). They read the same public parquet
+catalogue through the same DuckDB, and they answer the question *"where does
+the data live"* three different ways — which is the whole point of having three.
 
-| | **The Development Plate** (`/`) | **The Mortality Surface** (`/p/live`) |
-| --- | --- | --- |
-| Data | copied into Mendix entities | none stored at all |
-| Path | refresh job → entities → OData → charts | charts → OData → DuckDB → parquet |
-| Rows | 13,760 held | 11.9 M reachable, 0 held |
-| Freshness | as of the last refresh | as of this request |
-| Cost | one 16 s job, then instant | 0.3–1.4 s per figure |
+![The Mortality Surface](docs/board-2-mortality-surface.png)
+
+## What this is for
+
+The app is a working answer to a practical question: **when you put a Mendix
+app in front of a data lake, how much of the lake do you copy?**
+
+Mendix's instinct is to copy — import the data into entities, publish those,
+draw the charts. That is board one, and it is fast and simple and stale the
+moment the source moves. The alternative is to keep nothing and read per
+request, which is board two, and it costs a second per figure and is never
+stale. Board three asks whether the *charts themselves* have to be decided in
+advance at all.
+
+None of that is specific to Our World in Data. OWID is a good subject because
+its whole catalogue is public parquet with no key and no rate limit, so every
+claim here is measurable by anyone.
+
+| | **Development Plate** | **Mortality Surface** | **Explorer** |
+| --- | --- | --- | --- |
+| | `/` | `/p/live` | `/p/explore` |
+| Charts | fixed, authored | fixed, authored | chosen by whoever is looking |
+| Data | copied into entities | none stored | none stored |
+| Stored | 13,760 rows | nothing | the catalogue, and the card definitions |
+| Path | job → entities → OData → charts | charts → OData → connector → DuckDB | canvas → connector → DuckDB |
+| Freshness | as of the last refresh | as of this request | as of this request |
+| Cost | one 16 s job, then instant | 0.3–1.4 s per figure | 0.3–1.9 s per card |
+| Breaks when | the source moves | the source is slow | — |
 
 ---
 
-# Page one — "The Development Plate"
+## How it is built
 
-## What it is
+### Everything is a script
 
-A dashboard that lets one person explore how 215 countries developed between 1960
-and 2023 across nine indicators — income, life expectancy, child mortality,
-energy, CO₂, fertility, food supply, schooling and population. You pick a
-**topic** (which pair of indicators to plot), scrub or play a **year**, filter by
-**region**, and click any country to make it the **focus**; every figure on the
-page re-reads that shared state.
+There is no hand-drawn model. The app is **34 MDL scripts in `mdl/`**, applied
+in numeric order, and they are the source of truth for 78 entities, 65
+microflows, 19 pages, 13 Java actions, two OData services and a database
+connection. Re-running a stage is how the model is changed.
 
-It is a **single-user app with no security** — no login, no user roles. Anonymous
-access goes straight to the dashboard.
+That turned out to be worth more than tidiness. Adding one property to the
+chart widget invalidated all twelve existing chart instances (`CE0463`), which
+in Studio Pro is twelve right-clicks; here it was `mxcli exec mdl/13_page.mdl`.
+Pages defined as scripts repair themselves.
 
-## How it works
+It also has a trap, and it caught this project twice: `CREATE OR REPLACE` turns
+*"this script is redundant"* into *"this script wins"*. Two stages that both
+wrote the navigation profile meant re-running the earlier one silently reverted
+the later one. One document, one owner — see `FINDINGS.md` #27.
 
-DuckDB runs **inside the Mendix runtime** (driver in `userlib/`, driven by the
-`RefreshOwidData` Java action). It reads OWID's parquet files over HTTP range
-requests, harmonizes nine sources into one country-year table, and materializes
-215 countries x 64 years = 13,760 observations into Mendix entities. Those are
-published as OData at `/odata/owid/`, and the seven figures are Vega-Lite specs
-rendered by a pluggable widget.
+### DuckDB, three ways in
 
-"Live" means **re-runnable on demand** against current OWID data — the
-*Refresh from OWID* button re-runs the whole extract — not fetched per request:
-the extract takes seconds, which is fine for a refresh and far too slow to serve
-a chart.
+DuckDB reads OWID's parquet over HTTP range requests, so no file is ever
+downloaded whole. It is reached three ways, deliberately:
 
-## What it keeps track of
+| | |
+| --- | --- |
+| **In-process, from Java** | `RefreshOwidData` opens `jdbc:duckdb:` inside the runtime and runs the nine-source harmonisation that fills board one. One statement, 13,760 rows out. |
+| **External Database Connector** | Mendix's supported route, via the `BYOD` ("bring your own driver") type, which skips the driver-presence check DuckDB would fail. Boards two and three go through this. |
+| **`DYNAMIC` SQL** | The connector's stored query is a stub declaring the row shape; the statement that runs is built per request and replaces it. Bound parameters still work, which is what keeps user input out of the SQL. |
 
-Reference data:
+The driver is a declared Java dependency (`org.duckdb:duckdb_jdbc:1.4.1.0`),
+resolved into `vendorlib/` and committed, so a fresh clone compiles.
 
-- **Country** — all 215 OWID countries that carry data: name, ISO alpha-3, ISO
-  numeric code (for the choropleth), and region. Derived from OWID's own regions
-  table, not hand-listed.
-- **Indicator** — the nine series: key, label, unit, number format, and whether it
-  is drawn on a log scale or "lower is better".
-- **Topic** — the six preset x/y indicator pairings the topic switcher offers.
+### Publishing data Mendix has no table for
 
-Observation data (fetched from OWID, refreshable):
+Boards two and three publish non-persistable entities backed by read
+microflows. The thing the documentation does not say is that **Mendix then
+applies none of the query options to your answer** — `$filter`, `$orderby`,
+`$top`, `$skip` and the key lookup all arrive on the URI and all stay there.
+That is not an error; it is a 200 with the wrong rows.
 
-- **Observation** — one row per country per year, carrying all nine indicator
-  values. 215 × 64 = 13,760 rows. Country, ISO code and region are denormalized
-  onto the row: that is the flat shape Vega binds to.
+The `mendix-odata-pushdown` skill pack does the translation, and the read
+microflows are its splice-style caller: parse the URI once, concatenate the
+fragments onto a base statement held in a constant, run it through the
+connector. Every option was then checked at the wire rather than by looking at
+a widget — see the table in `FINDINGS.md` #28.
 
-## Where the data comes from
+### Charts
 
-Live from OWID's public parquet catalog at `catalog.ourworldindata.org`, read by
-**DuckDB running in-process inside the Mendix runtime** (DuckDB JDBC in
-`userlib/`, driven by a Java action). DuckDB's `httpfs` extension queries the
-remote parquet files directly over HTTP range requests — no bulk download.
+One pluggable widget renders both Vega-Lite and Vega, dispatching on the spec's
+own `$schema`. Boards one and two hold authored specs; board three builds the
+spec in a Java action from what the user picked, and hands it to the widget
+through an attribute. Board two's mortality surface is full Vega rather than
+Vega-Lite for one reason: its country selector is a signal and the data URL is
+built from it, so changing the select re-issues the request.
+
+### Look and feel
+
+The **Industry** design system from the supplied mockup: steel blue `#5980a6` on
+a light technical ground `#f2f2f3`, Barlow Condensed over Barlow, a modular
+grid, and cards drawn as square-cornered hairline "blueprint" objects with `+`
+registration marks. Built on mxcli's `signal` theme with its tokens retuned.
+
+Fonts and the topojson are vendored under `theme/web/vendor/` — the app has no
+CDN egress, and a chart that silently falls back to a system font is worse than
+one that fails.
+
+---
+
+## Board one — "The Development Plate"
+
+![The Development Plate](docs/board-1-development-plate.png)
+
+How 215 countries developed between 1960 and 2023 across nine indicators. Pick
+a **topic** (which pair of indicators to plot), scrub a **year**, filter by
+**region**, click any country to make it the **focus**; all seven figures read
+that one shared state.
+
+A Java action runs a single DuckDB query that harmonises nine OWID sources into
+one country-year table and materialises 215 × 64 = 13,760 observations into
+Mendix entities. Those are published at `/odata/owid/` and the figures fetch
+from there. *Refresh from OWID* re-runs the extract on a task queue, so the app
+serves throughout the 16 seconds it takes.
 
 | Indicator | Source table |
 | --- | --- |
@@ -75,127 +128,40 @@ remote parquet files directly over HTTP range requests — no bulk download.
 | Daily food supply | `faostat/2026-05-22/additional_variables` |
 | Mean years of schooling | `education/2023-07-17/education_barro_lee_projections` |
 
-The nine series are harmonized into one country/year table by a single DuckDB
-query, materialized into Mendix entities, and **published as an OData service**
-that the charts fetch from. A refresh action re-runs the query on demand.
-
-The Mendix **External Database Connector** also reaches the same DuckDB, via
-Mendix's `BYOD` ("bring your own driver") type — `Owid.OwidDuck`, exercised by
-`ACT_QueryViaConnector` and reachable at `POST /odata/owid/QueryViaConnector`.
-The Java-action path drives the dashboard because it expresses the whole
-nine-source harmonization; the connector is the supported-product route to the
-same data.
-
-See `FINDINGS.md` for the data caveats, and #20 for the two traps in wiring a
-BYOD connection (the connection string must be a constant reference, and
-username/password must reference constants even when the driver needs neither
-— both build green and fail later).
-
-## Look and feel
-
-The **Industry** design system from the supplied mockup: steel-blue `#5980a6` on a
-light technical ground `#f2f2f3`, Barlow Condensed headings over Barlow body text,
-a modular grid, and cards and figures drawn as square-cornered hairline "blueprint"
-objects with `+` registration marks at their corners. Built on mxcli's `signal`
-theme with its tokens retuned to the Industry palette.
-
-Charts are Vega-Lite specifications, as in the mockup.
-
-The dashboard opens on **2022**, the last year Maddison publishes GDP for.
-Topic, region and year controls all apply on change — the Apply button that
-stood in for a broken `OnChange` is gone, fixed upstream (`FINDINGS.md` #26).
+The board opens on **2022**, the last year Maddison publishes GDP for.
 
 ---
 
-# Page two — "The Mortality Surface"
+## Board two — "The Mortality Surface"
 
-## What it is
+![The mortality surface](docs/detail-lexis-surface.png)
 
-The same design system over a dataset the app **never copies**. Five figures and
-a table over the UN World Population Prospects 2024 life tables as OWID
-publishes them: 261 places, single year of age by sex, estimates 1950–2023 and
-Medium-variant projections to 2100. 11.9 million rows and 483 MB of parquet, of
-which this app stores nothing.
-
-- **FIG 01** — the Lexis surface: death rate by age and year, 74 × 101 cells for
-  one place, on a log scale. Its country selector is a **Vega signal**, so
-  changing it rebuilds the data URL and the browser fetches a new surface.
-- **FIG 02** — the mortality bathtub, World, 1950 / 1990 / 2023.
-- **FIG 03** — life expectancy at birth 1950–2100, eight countries, observed
-  then projected.
-- **FIG 04** — survival curves: of 100 born, the share reaching each age.
-- **FIG 05** — the sex gap, female minus male. Russia peaks at 13.8 years in 1994.
-- **TAB 01** — every country ranked, 2023.
-
-## How it works
-
-Nothing is stored, and nothing is written on the way back:
+The same design over a dataset the app **never copies**. UN World Population
+Prospects 2024 life tables as OWID publishes them: 261 places, single year of
+age by sex, estimates 1950–2023 and Medium-variant projections to 2100. 11.9
+million rows and 483 MB of parquet, of which this app stores nothing.
 
 ```
-browser  ──GET /odata/live/LifeTable?$filter=…&$top=…──▶  Mendix
-                                                          │
-                                          read microflow  │  Owid.DS_LifeTable
-                                          Owid.Parse ─────┤  $filter/$orderby/$top/$skip
-                                                          │  → SQL fragments
-                                External Database Connector  (BYOD, DuckDB)
-                                                          │
-                                    DuckDB httpfs ────────▶ catalog.ourworldindata.org
-                                                             (HTTP range requests)
+browser --GET ?$filter=...&$top=...--> read microflow
+        --> Owid.Parse (odata-pushdown) --> SQL fragments
+        --> External Database Connector, DYNAMIC --> DuckDB
+        --> catalog.ourworldindata.org over HTTP range requests
 ```
 
-Mendix applies **none** of the query options to a resource served by a read
-microflow — `$filter`, `$orderby`, `$top`, `$skip` and the key lookup all arrive
-on the URI and all stay there. Left alone that is a 200 with the wrong rows. The
-`mendix-odata-pushdown` skill pack does the translation, and this app is its
-splice-style caller: parse the URI once, concatenate the fragments onto a base
-statement held in a constant, run it through the connector with
-`EXECUTE DATABASE QUERY … DYNAMIC`.
+Five figures and a table: the Lexis surface above (74 years × 101 ages, with its
+own country selector), the mortality bathtub, life expectancy 1950–2100
+observed then projected, survival curves, and the female-minus-male gap — where
+Russia peaks at 13.8 years in 1994. The table goes the other way on purpose:
+same connection, same parquet, read straight into a Mendix data grid with no
+HTTP and no OData, because publishing is a choice about the consumer rather than
+a requirement of reading.
 
-The three published resources are `LifeTable`, `LifeExpectancy` and `Places`,
-all non-persistable.
+### What it costs
 
-### Paging
-
-There are two kinds and only one of them is available here.
-
-**Server-side paging** (`UsePaging: Yes` + `PageSize`, where Mendix chunks the
-answer and hands back `@odata.nextLink`) is refused on a read-microflow
-resource — CE7230, and it fires on `UsePaging: Yes` alone with no `PageSize`
-set. That is right rather than a limitation: the platform cannot chunk an
-answer it did not build, and `System.ODataResponse` has one attribute, `Count`,
-with nowhere to put a link.
-
-**App-controlled paging** — `$top` and `$skip` — is fully available and is what
-these resources implement: `Parse` turns them into `LIMIT`/`OFFSET` clamped to
-`MaxTop`. Mendix's own server-side `nextLink` is literally `?$skip=100`, so this
-is the same mechanism underneath; the only thing lost is the server volunteering
-the next URL.
-
-`$count` is what makes that usable, so the resources are `Countable: Yes` and
-answer it for real — the same base and `WHERE` without the `LIMIT`, run only
-when the client asked:
-
-```
-GET /odata/live/LifeTable/$count                  -> 5852142
-GET /odata/live/Places?$top=3&$count=true         -> @odata.count 261, 3 rows
-GET …&$count=true&$filter=kind eq 'Country/Area'  -> @odata.count 237
-GET /odata/live/LifeTable?$count=true             -> 500 rows of @odata.count 5852142
-```
-
-The last line is the point: without `$count`, an unbounded `GET` comes back
-truncated at `DefaultTop` with nothing saying so — 500 rows of 5.8 million,
-under a 200. With it, truncation is visible to the client.
-
-**TAB 01 goes the other way on purpose**: the same connection and the same
-parquet, read straight into a Mendix data grid with no HTTP and no OData. The
-service is a choice about who the consumer is, not a requirement of reading the
-data.
-
-## What it costs
-
-Measured on the running app. Cold is the first request after a restart; warm is
-any request after the connector's pooled DuckDB connection has the file's
-metadata and pages cached.
+Cold is the first request after a restart; warm is any request after the
+connector's pooled DuckDB connection has the file's metadata and pages cached.
+Nothing in the app arranges that — it falls out of the connector holding the
+handle.
 
 | Request | Rows | Cold | Warm |
 | --- | --- | --- | --- |
@@ -204,72 +170,190 @@ metadata and pages cached.
 | `LifeTable`, World, three years | 303 | — | 0.26 s |
 | `LifeExpectancy`, 8 countries, 1950–2100 | 1,208 | — | 1.25 s |
 
-The whole board is five parallel requests and about 1.5 s. The strip under the
-page header prints the milliseconds a probe query took **at that page load**,
-because "live" is a claim about latency and a page making the claim should show
-the number rather than assert it.
+The whole board is five parallel requests and about 1.5 s.
 
-## Trying the service by hand
+### Paging, and which kind it has
 
-```bash
-curl "http://localhost:8080/odata/live/Places?\$top=3"
-curl "http://localhost:8080/odata/live/Places('Japan')"
-curl "http://localhost:8080/odata/live/LifeTable?\$filter=location%20eq%20%27Japan%27%20and%20year%20eq%202000%20and%20age%20le%202&\$orderby=age"
-```
+Two mechanisms, and only one is available on a read-microflow resource.
 
-See `FINDINGS.md` #28–#35 for what was measured and the four traps:
-*server-side* paging is refused on a read-microflow resource while `$top`/`$skip`
-are not (#29, #29b), the pack's documented `IF Rejected` branch is unreachable
-(#30), the key from the path segment never reaches a splice caller (#31), and
-the UN scales three rate columns three different ways (#32).
+**Server-side paging** (`UsePaging` + `PageSize`, where Mendix chunks the answer
+and returns `@odata.nextLink`) is refused by `CE7230` — correctly, since the
+platform cannot chunk an answer it did not build, and `System.ODataResponse`
+carries one field, `Count`, with nowhere to put a link.
 
-## Reading it in Studio Pro
-
-The module is foldered by architecture, because that is the one thing worth
-seeing first:
+**App-controlled paging** — `$top` and `$skip` — is fully available and is what
+these resources implement. `$count` is what makes it usable, so they answer it
+for real, only when asked:
 
 ```
-Board 1 - stored/   Load/  Dashboard/  Api/
-Board 2 - live/     Resources/  Dashboard/
-DuckDB/             the connection both boards reach through
-OData pushdown/     the skill pack's actions, kept apart because they are not
-                    this app's code and are replaced wholesale on update
+GET /odata/live/LifeTable?$count=true   ->  500 rows of @odata.count 5852142
 ```
 
-Entities are not in there: Mendix keeps them in the domain model rather than the
-document tree. `mdl/25_folders.mdl` is the placement, so it survives a rebuild
-from the scripts.
+That last line is the point: without `$count`, an unbounded `GET` comes back
+truncated at the default cap with nothing saying so.
 
 ---
 
-# Running it
+## Board three — "The Explorer"
+
+![The Explorer](docs/board-3-explorer.png)
+
+Not a dashboard someone built for you — a **chart builder**. Browse OWID's
+catalogue, open a table to read the columns it really has, put a column on an
+axis, keep the result on a canvas that survives a reload.
+
+- **Catalogue** — the tables, searchable, filtered to the ones confirmed to be
+  served.
+- **Fields** — the selected table's real columns, read from the parquet footer
+  when you open it. Each row carries `x` / `value` / `split` / `filter`. That is
+  Tableau's drag-onto-a-shelf with the drag taken out — and it is not a style
+  choice: an association combo box cannot be written from mxcli, because the
+  required option caption is dropped and the build fails `CE0642`.
+
+  <img src="docs/detail-field-shelf.png" alt="The field shelf" width="340">
+
+- **Chart** — the selected card's type (line, bar, area, scatter, heatmap,
+  single number), aggregate, filter, row cap, width.
+- **Canvas** — the saved cards, run live, reorderable.
+
+![The canvas](docs/detail-canvas.png)
+
+**"Chart it" does not open an empty form.** It guesses from the columns the
+table actually has — `year` on x if there is one, `country` / `location` /
+`entity` as the split, the first numeric column not already spoken for as the
+value, a line if x is a year and a bar otherwise. On OWID's garden channel that
+lands on something sensible almost every time, because the whole channel is
+harmonised to country × year.
+
+### Stored and live, one layer further back
+
+Stored is the catalogue index, each table's column list once looked at, and the
+card *definitions* — which table, which columns, which chart type. Live is every
+number on every chart: each card's query runs against remote parquet when the
+page draws, and nothing comes back into the database.
+
+A card's whole series arrives as **one JSON document built by DuckDB** —
+`to_json(list(struct_pack(x := …, s := …, y := …)))` over the aggregate returns
+exactly the array Vega wants — so no microflow ever loops five thousand rows to
+concatenate a string.
+
+The columns are chosen by the user but never typed by them: they are references
+to `Owid.Field` rows that came from `DESCRIBE` on the file itself, so a card
+cannot name a column that does not exist. The one value a person does type — the
+filter — never reaches the statement at all; it is bound as `{filterval}`.
+
+### The catalogue problem, stated plainly
+
+OWID publishes its garden index twice, and only one of the two is current:
+
+| | Last-Modified | DuckDB |
+| --- | --- | --- |
+| `catalog-garden.parquet` | **22 Mar 2023** | reads it in 0.6 s |
+| `catalog-garden.feather` | today | cannot read it — LZ4 Arrow IPC |
+
+The 2023 index is not slightly stale: **23 of 24 sampled paths 404**, rewriting
+the version to `latest` rescues none of them, and
+`garden/un/2024-12-02/un_wpp_lt` — which board two reads on every load — is not
+in it at all. There is no bucket listing and no JSON index to fall back to.
+
+So the browser runs on two sources, and says so. **Load the verified set** seeds
+eleven paths checked by hand, so the page opens on tables that work. **Pull the
+index** adds the 1,138 for breadth. **Verify 25 more** probes them in batches
+and writes down which still answer, which is what makes the *"only tables
+confirmed to work"* filter true rather than a guess. **Example canvas** builds
+the four cards above. `FINDINGS.md` #39 has the full account.
+
+| | |
+| --- | --- |
+| Catalogue pull, 1,138 rows indexed | ~10 s, on the queue |
+| Column read on opening a table | ~0.5 s, one range request |
+| First card on a cold table, 4,311 rows aggregated | 1.4–1.9 s |
+| Same card after a change (warm connection) | 260–350 ms |
+
+---
+
+## Running it
 
 ```bash
 ./mxcli run --local -p OwidExplorer.mpr     # http://localhost:8080/
 ```
 
-`/` is the stored board, `/p/live` is the live one, and the navigation menu
-carries both.
+`/` is the stored board, `/p/live` the live one, `/p/explore` the builder; the
+navigation menu carries all three.
 
-DuckDB is a **declared Java dependency** of the `Owid` module
-(`org.duckdb:duckdb_jdbc:1.4.1.0`), resolved into `vendorlib/` and committed, so
-a fresh clone compiles as-is. If `vendorlib/` is ever incomplete, repair it with
-`./mxcli sync-java-deps -p OwidExplorer.mpr`.
-
-A fresh clone has no `mxcli` binary (it is git-ignored, ~88 MB). The SessionStart
-hook in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds
-mxcli from **ako/mxcli main** and then caches MxBuild, starts PostgreSQL and
+A fresh clone has no `mxcli` binary (git-ignored, ~88 MB). The SessionStart hook
+in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds mxcli
+from **ako/mxcli main** from source, caches MxBuild, starts PostgreSQL and
 creates the database.
 
-The model is built by the MDL scripts in `mdl/`, applied in numeric order:
-`01`–`18` build the stored board, `19`–`24` the live one. The live pages also
-need the `mendix-odata-pushdown` skill pack, which ships the parser the read
-microflows delegate to:
+There is no security: no login, no user roles, anonymous access straight to the
+boards, and the OData feeds are open. That is deliberate for a demonstrator and
+would be the first thing to change for anything else.
+
+### Rebuilding from the scripts
 
 ```bash
+# the pushdown pack ships the parser the live read microflows delegate to
 ./mxcli skill add mendix-odata-pushdown -p OwidExplorer.mpr --module Owid
 ./mxcli exec .claude/skills/mendix-odata-pushdown/mdl/module.mdl -p OwidExplorer.mpr
+
+for f in mdl/*.mdl; do ./mxcli exec "$f" -p OwidExplorer.mpr; done
+~/.mxcli/mxbuild/*/modeler/mx check OwidExplorer.mpr
 ```
+
+`01`–`18` build the stored board, `19`–`25` the live one, `26`–`34` the
+explorer. If `vendorlib/` is ever incomplete, repair it with
+`./mxcli sync-java-deps -p OwidExplorer.mpr`.
+
+### Rebuilding the chart widget
+
+The explorer needs the widget's `specSource` property (a model-built spec). If
+the widget is rebuilt, **re-extract its definition** or mxcli will silently drop
+every property it writes, and **re-apply the pages** or every existing instance
+fails `CE0463`:
+
+```bash
+cd .claude/skills/mendix-vega-charts/widget && npm run build && cd -
+cp .claude/skills/mendix-vega-charts/widget/dist/1.0.0/owidexplorer.widget.web.VegaChart.mpk widgets/
+./mxcli widget extract --mpk widgets/owidexplorer.widget.web.VegaChart.mpk -p OwidExplorer.mpr
+./mxcli exec mdl/13_page.mdl -p OwidExplorer.mpr
+./mxcli exec mdl/23_livepage.mdl -p OwidExplorer.mpr
+./mxcli exec mdl/32_explorepage.mdl -p OwidExplorer.mpr
+./mxcli exec mdl/24_livenav.mdl -p OwidExplorer.mpr
+```
+
+### Reading it in Studio Pro
+
+The module is foldered by architecture, because that is the thing worth seeing
+first:
+
+```
+Board 1 - stored/    Load/  Dashboard/  Api/
+Board 2 - live/      Resources/  Dashboard/
+Board 3 - explorer/  Catalogue/  Shelf/  Canvas/
+DuckDB/              the connection all three boards reach through
+OData pushdown/      the skill pack's actions, kept apart because they are not
+                     this app's code and are replaced wholesale on update
+```
+
+Entities are not in there — Mendix keeps them in the domain model rather than
+the document tree. `mdl/25_folders.mdl` is the placement, so it survives a
+rebuild from the scripts.
+
+---
+
+## What was learned
+
+`FINDINGS.md` is the durable record — 40 entries, each with the measurement
+behind it. The ones worth reading even if you never touch this app:
+
+| | |
+| --- | --- |
+| #20 | The External Database Connector *does* work with DuckDB, via `BYOD`. Two traps build green and fail at run time. |
+| #28–#31 | Publishing over data Mendix has no table for: what reaches the SQL, what silently does not, and the key lookup that returned the wrong row under a 200. |
+| #32 | The UN scales three rate columns three different ways and says so nowhere. |
+| #36–#38 | mxcli's edges: the widget definition cache, what a list expression can and cannot say, and the combo box that cannot be written. |
+| #39 | OWID's catalogue index: the current one is unreadable and the readable one is three years stale. |
 
 - Mendix **11.13.0**
 - mxcli built from source, `ako/mxcli` main

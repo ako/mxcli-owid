@@ -9,9 +9,16 @@
     <icon />
     <properties>
         <propertyGroup caption="Chart">
-            <property key="spec" type="string" required="true" multiline="true">
+            <property key="spec" type="string" required="false" multiline="true">
                 <caption>Specification</caption>
-                <description>Vega-Lite or Vega JSON. Which language is used is decided by the spec's own $schema, so both are accepted here. Any "data" in the spec is replaced by the Data property below when that is set.</description>
+                <description>Vega-Lite or Vega JSON, authored here and fixed. Which language is used is decided by the spec's own $schema, so both are accepted. Any "data" in the spec is replaced by the Data property below when that is set. Leave empty only when Specification (from the model) supplies one instead.</description>
+            </property>
+            <property key="specSource" type="attribute" required="false">
+                <caption>Specification (from the model)</caption>
+                <description>A spec built by a microflow rather than authored here, for a chart whose shape the user chooses at run time. When this is set and loaded it replaces the Specification above; the static one is then only a fallback for while it loads. A chart whose layout never changes should use the static property, so the model never has to generate layout.</description>
+                <attributeTypes>
+                    <attributeType name="String" />
+                </attributeTypes>
             </property>
             <property key="chartData" type="attribute" required="false">
                 <caption>Data</caption>

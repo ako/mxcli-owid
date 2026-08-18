@@ -1,0 +1,152 @@
+-- Stage 34: an example canvas.
+--
+-- A fresh clone opens board three on an empty board, which is the worst way to
+-- show a chart builder: the whole point is what it can be pointed at, and an
+-- empty canvas shows none of it. Four cards, each picked to exercise a
+-- different part of the generator rather than to be pretty:
+--
+--   1  a line with a small split      -- the ordinary case, three clean series
+--   2  a scatter aggregated BY the split -- where the split is the grain, one
+--                                          point per country rather than per
+--                                          country-year
+--   3  a single number                -- no axes at all
+--   4  a line with 153 series         -- the legend-suppression path, so the
+--                                        caption that says so is visible
+--
+-- They are definitions, not data: pressing this button stores four rows and
+-- nothing else. Every number on all four is fetched when the canvas draws.
+
+CREATE OR REPLACE MICROFLOW Owid.SUB_MakeCard (
+  $Path:      String,
+  $Title:     String,
+  $Type:      Owid.ChartType,
+  $Agg:       Owid.AggType,
+  $XName:     String,
+  $YName:     String,
+  $SName:     String,
+  $FName:     String,
+  $FValue:    String,
+  $Order:     Integer
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Dataset FROM Owid.Dataset WHERE Path = $Path LIMIT 1;
+
+  @position(360, 200)
+  IF $Dataset = empty THEN
+    @position(400, 320)
+    RETURN;
+  END IF;
+
+  -- The seed probes as it goes, so the fields exist by the time this runs --
+  -- but a card whose columns were never read would be a card with empty axes,
+  -- so it is worth making sure rather than assuming.
+  @position(620, 200)
+  IF $Dataset/Available = false THEN
+    @position(660, 320)
+    CALL MICROFLOW Owid.ACT_ProbeDataset (Dataset = $Dataset);
+  END IF;
+
+  @position(940, 200)
+  RETRIEVE $Fields FROM $Dataset/Owid.Field_Dataset;
+
+  @position(1120, 200)
+  $Card = CREATE Owid.Card (
+    Title = $Title, ChartType = $Type, Agg = $Agg,
+    FilterValue = $FValue, RowLimit = 5000, SortOrder = $Order, Wide = false,
+    Owid.Card_Dataset = $Dataset
+  );
+
+  @position(1400, 200)
+  $FX = FIND($Fields, Name = $XName);
+
+  @position(1560, 200)
+  IF $FX != empty THEN
+    @position(1600, 320)
+    CHANGE $Card (Owid.Card_X = $FX);
+  END IF;
+
+  @position(1840, 200)
+  $FY = FIND($Fields, Name = $YName);
+
+  @position(2000, 200)
+  IF $FY != empty THEN
+    @position(2040, 320)
+    CHANGE $Card (Owid.Card_Y = $FY);
+  END IF;
+
+  @position(2280, 200)
+  $FS = FIND($Fields, Name = $SName);
+
+  @position(2440, 200)
+  IF $FS != empty THEN
+    @position(2480, 320)
+    CHANGE $Card (Owid.Card_Series = $FS);
+  END IF;
+
+  @position(2720, 200)
+  $FF = FIND($Fields, Name = $FName);
+
+  @position(2880, 200)
+  IF $FF != empty THEN
+    @position(2920, 320)
+    CHANGE $Card (Owid.Card_Filter = $FF);
+  END IF;
+
+  @position(3160, 200)
+  COMMIT $Card;
+END;
+
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_SeedCanvasNow ()
+BEGIN
+  @position(120, 200)
+  CALL MICROFLOW Owid.ACT_SeedDatasetsNow ();
+
+  -- 1. Life expectancy at birth, by sex. age = '0' is the filter that turns a
+  --    5.8-million-row life table into a time series.
+  @position(340, 200)
+  CALL MICROFLOW Owid.SUB_MakeCard (
+    Path = 'garden/un/2024-12-02/un_wpp_lt/un_wpp_lt',
+    Title = 'Life expectancy at birth, by sex',
+    Type = Owid.ChartType.Line, Agg = Owid.AggType.Avg,
+    XName = 'year', YName = 'life_expectancy', SName = 'sex',
+    FName = 'age', FValue = '0', Order = 1);
+
+  -- 2. Aggregated scatter: the split is the grain, so this is one point per
+  --    place rather than one per place-year.
+  @position(620, 200)
+  CALL MICROFLOW Owid.SUB_MakeCard (
+    Path = 'garden/un/2024-12-02/un_wpp_lt/un_wpp_lt',
+    Title = 'Infant death rate against life expectancy',
+    Type = Owid.ChartType.Scatter, Agg = Owid.AggType.Avg,
+    XName = 'central_death_rate', YName = 'life_expectancy', SName = 'location',
+    FName = 'age', FValue = '0', Order = 2);
+
+  -- 3. No axes at all.
+  @position(900, 200)
+  CALL MICROFLOW Owid.SUB_MakeCard (
+    Path = 'garden/un/2024-12-02/un_wpp_lt/un_wpp_lt',
+    Title = 'Longest life expectancy at birth on record',
+    Type = Owid.ChartType.Number, Agg = Owid.AggType.Max,
+    XName = '', YName = 'life_expectancy', SName = '',
+    FName = 'age', FValue = '0', Order = 3);
+
+  -- 4. 153 countries: the legend goes away and the caption says so.
+  @position(1180, 200)
+  CALL MICROFLOW Owid.SUB_MakeCard (
+    Path = 'garden/ggdc/2024-04-26/maddison_project_database/maddison_project_database',
+    Title = 'Income per person, every country Maddison covers',
+    Type = Owid.ChartType.Line, Agg = Owid.AggType.Avg,
+    XName = 'year', YName = 'gdp_per_capita', SName = 'country',
+    FName = '', FValue = '', Order = 4);
+
+  @position(1460, 200)
+  LOG INFO NODE 'OwidExplorer' 'Example canvas created.';
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_SeedCanvas ()
+BEGIN
+  @position(120, 200)
+  CALL MICROFLOW Owid.ACT_SeedCanvasNow () IN QUEUE Owid.RefreshQueue;
+END;

@@ -561,3 +561,240 @@
   max-height: 560px;
   overflow-y: auto;
 }
+
+/* ======================================================================== */
+/* Board three: the explorer.                                               */
+/*                                                                          */
+/* A working surface rather than a printed plate: three narrow panels on the */
+/* left that you operate, and the canvas on the right that answers. The      */
+/* panels scroll independently so the canvas is never pushed off the screen  */
+/* by a table with sixty columns.                                            */
+/* ======================================================================== */
+
+.owid-explore > .mx-dataview-content {
+  grid-template-columns: 300px 300px 1fr;
+  align-items: start;
+}
+
+.owid-ex-browse   { grid-column: 1; }
+.owid-ex-shelf    { grid-column: 2; }
+.owid-ex-settings { grid-column: 1 / 3; }
+.owid-ex-canvas   { grid-column: 3; grid-row: 2 / 6; min-width: 0; }
+
+.owid-ex-browse,
+.owid-ex-shelf {
+  max-height: 460px;
+  display: flex;
+  flex-direction: column;
+}
+
+.owid-ex-sets,
+.owid-ex-fields {
+  overflow-y: auto;
+  min-height: 0;
+  flex: 1;
+}
+
+/* --- rows in the two lists ---------------------------------------------- */
+.owid-ex-set,
+.owid-ex-field {
+  display: grid;
+  gap: 1px 8px;
+  padding: 6px 0;
+  border-top: 1px solid color-mix(in srgb, var(--owid-ink) 10%, transparent);
+}
+.owid-ex-set {
+  grid-template-columns: 1fr auto;
+}
+.owid-ex-field {
+  grid-template-columns: 1fr auto;
+}
+
+.owid-ex-setname,
+.owid-ex-fname {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 14px;
+  line-height: 1.15;
+  color: var(--owid-ink);
+  overflow-wrap: anywhere;
+}
+.owid-ex-setmeta,
+.owid-ex-ftype {
+  display: block;
+  font-size: 10px;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  color: color-mix(in srgb, var(--owid-ink) 48%, transparent);
+}
+.owid-ex-path {
+  display: block;
+  font-size: 10.5px;
+  color: color-mix(in srgb, var(--owid-ink) 48%, transparent);
+  overflow-wrap: anywhere;
+}
+.owid-ex-note {
+  display: block;
+  font-size: 11px;
+  color: #9a3b1c;
+}
+
+.owid-ex-set .btn,
+.owid-ex-field .btn {
+  align-self: start;
+}
+
+/* The shelf buttons. Small, square, and side by side — they are a row of
+   targets, not a menu. */
+.owid-ex-fbtns {
+  grid-column: 2;
+  grid-row: 1 / 3;
+  display: flex;
+  gap: 3px;
+  align-items: start;
+}
+.owid-ex-fbtns .btn {
+  border-radius: 0;
+  padding: 2px 6px;
+  font-family: var(--font-body);
+  font-size: 10px;
+  letter-spacing: 0.03em;
+  min-width: 0;
+  line-height: 1.5;
+}
+
+/* --- the chart panel ---------------------------------------------------- */
+.owid-ex-bar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  align-items: end;
+  margin: 8px 0 4px;
+}
+.owid-ex-search { flex: 1; min-width: 120px; }
+
+.owid-ex-selhead { margin-bottom: 6px; }
+
+/* Each assigned field reads as a shelf: a label, then what is on it. */
+.owid-ex-slot {
+  border-left: 2px solid var(--owid-accent);
+  padding: 2px 0 2px 8px;
+  margin: 3px 0;
+}
+.owid-ex-slotval {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 13.5px;
+  color: var(--owid-ink);
+}
+
+.owid-explore .owid-ex-card .form-group { margin-bottom: 6px; }
+.owid-explore .owid-ex-card label {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--owid-ink) 52%, transparent);
+}
+
+/* --- the canvas --------------------------------------------------------- */
+/* The grid goes on the UL, not on the list view.
+   Same trap as .owid-page > .mx-dataview-content on board one and it caught me
+   twice: Mendix's list view is a div wrapping a ul wrapping one li per row, so
+   a grid on the widget has exactly one child and every card stacks. */
+.owid-ex-cards > ul {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: var(--owid-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.owid-ex-cards > ul > li {
+  min-width: 0;
+  border: 0;
+  padding: 0;
+}
+.owid-ex-cardbox { min-width: 0; }
+
+.owid-ex-cardnote {
+  display: block;
+  font-size: 11.5px;
+  color: #9a3b1c;
+  padding: 4px 0;
+}
+.owid-ex-cardbar {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid color-mix(in srgb, var(--owid-ink) 10%, transparent);
+}
+.owid-ex-cardstat {
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--owid-ink) 45%, transparent);
+}
+.owid-ex-cardacts { display: flex; gap: 4px; }
+.owid-ex-cardacts .btn {
+  border-radius: 0;
+  padding: 2px 7px;
+  font-size: 10.5px;
+}
+
+@media (max-width: 1400px) {
+  .owid-explore > .mx-dataview-content { grid-template-columns: 280px 1fr; }
+  .owid-ex-browse   { grid-column: 1; }
+  .owid-ex-shelf    { grid-column: 1; }
+  .owid-ex-settings { grid-column: 1; }
+  .owid-ex-canvas   { grid-column: 2; grid-row: 2 / 6; }
+  .owid-ex-cards > ul { grid-template-columns: 1fr; }
+}
+@media (max-width: 900px) {
+  .owid-explore > .mx-dataview-content { grid-template-columns: 1fr; }
+  .owid-ex-browse, .owid-ex-shelf, .owid-ex-settings,
+  .owid-ex-canvas { grid-column: 1 / -1; grid-row: auto; }
+}
+
+/* Labels on this board carry meaning -- "Aggregate", "Row cap", "Filter is" --
+   so unlike board one they cannot be hidden. Atlas puts them in the left
+   column of a two-column form grid, which at this width truncated them to a
+   single letter. Stack them above the input instead. */
+.owid-explore .form-group {
+  display: block;
+  margin-bottom: 8px;
+}
+.owid-explore .form-group > label {
+  display: block;
+  float: none;
+  width: auto;
+  max-width: none;
+  flex: none;
+  text-align: left;
+  padding: 0 0 2px;
+  font-family: var(--font-body);
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--owid-ink) 52%, transparent);
+}
+.owid-explore .form-group > div[class^="col-"],
+.owid-explore .form-group > div[class*=" col-"] {
+  width: 100%;
+  flex: 0 0 100%;
+  max-width: 100%;
+  padding-left: 0;
+  padding-right: 0;
+}
+.owid-explore input[type="text"],
+.owid-explore .widget-combobox-input-container {
+  border-radius: 0;
+}
+
+/* The two list panels are the working surface; give them room. */
+.owid-ex-browse,
+.owid-ex-shelf {
+  max-height: 620px;
+}

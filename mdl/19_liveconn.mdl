@@ -188,4 +188,37 @@ BEGIN
     PARAMETER keyval: String DEFAULT ''
     RETURNS Owid.CountRow
     MAP (n AS N);
+
+  -- ------------------------------------------------------------------
+  -- Board three: the catalogue browser and the chart builder.
+  -- ------------------------------------------------------------------
+
+  -- The published index of the garden channel: 1,138 curated tables, read in
+  -- about half a second. Metadata only -- no table's data is touched here.
+  QUERY Catalog
+    SQL $$SELECT '' AS path, '' AS ns, '' AS ds, '' AS ver, '' AS tbl, 0 AS dims
+          WHERE false$$
+    RETURNS Owid.CatRow
+    MAP (path AS Path, ns AS Namespace, ds AS DatasetName,
+         ver AS Version, tbl AS TableName, dims AS Dims);
+
+  -- A table's columns, asked of the file itself rather than of the index.
+  -- DESCRIBE reads the parquet footer, so it costs one range request.
+  QUERY Describe
+    SQL $$SELECT '' AS column_name, '' AS column_type, false AS is_num WHERE false$$
+    RETURNS Owid.DescRow
+    MAP (column_name AS ColName, column_type AS ColType, is_num AS IsNum);
+
+  -- A card's whole series, as one JSON document built by DuckDB.
+  --
+  -- to_json(list(struct_pack(...))) over the aggregate returns the array Vega
+  -- wants, already shaped -- so the alternative, a microflow looping five
+  -- thousand rows to concatenate a string, never has to exist. The filter value
+  -- is bound rather than spliced: it is the one part of the statement that
+  -- comes from a text box.
+  QUERY ChartJson
+    SQL $$SELECT '[]' AS j, 0 AS n, 0 AS s WHERE {filterval} <> {filterval}$$
+    PARAMETER filterval: String DEFAULT ''
+    RETURNS Owid.JsonRow
+    MAP (j AS J, n AS N, s AS S);
 END;

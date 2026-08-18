@@ -1,0 +1,355 @@
+-- Stage 30: the page's state, and what the buttons do.
+--
+-- The one thing worth being careful about here is what happens on "Chart it".
+-- A builder that opens with every dropdown empty is a builder nobody uses, so
+-- this guesses -- from the columns the table actually has -- and the guess is
+-- deliberately dumb and predictable rather than clever:
+--
+--   x       'year' if the table has one, else its first non-numeric column
+--   split   'country', 'location' or 'entity', whichever exists
+--   value   the first numeric column that is not already the x or the split
+--   chart   a line if x is a year, a bar otherwise
+--
+-- On OWID's garden channel that lands on something sensible almost every time,
+-- because the whole channel is harmonised to country x year.
+
+CREATE OR REPLACE MICROFLOW Owid.DS_Explorer ()
+  RETURNS Owid.Explorer AS $E
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Sets FROM Owid.Dataset;
+
+  @position(300, 200)
+  $NSets = COUNT($Sets);
+
+  @position(460, 200)
+  RETRIEVE $Cards FROM Owid.Card;
+
+  @position(620, 200)
+  $NCards = COUNT($Cards);
+
+  @position(780, 200)
+  $E = CREATE Owid.Explorer (
+    Search = '', Message = '', DatasetCount = $NSets, CardCount = $NCards
+  );
+
+  @position(980, 200)
+  RETURN $E;
+END;
+
+
+-- The browser list. Searching in XPath rather than filtering 1,138 objects in
+-- memory: the database is right there and it is what it is for.
+--
+-- The default hides everything nobody has confirmed, which on this catalogue
+-- is most of it -- see stage 33. Turning the filter off shows the whole index,
+-- which is worth doing to see the shape of the problem.
+CREATE OR REPLACE MICROFLOW Owid.DS_Datasets (
+  $Explorer: Owid.Explorer
+)
+  RETURNS List of Owid.Dataset AS $Rows
+BEGIN
+  @position(120, 200)
+  IF $Explorer/OnlyWorking THEN
+    @position(160, 320)
+    RETRIEVE $Working FROM Owid.Dataset
+      WHERE Available = true and contains(Path, $Explorer/Search)
+      SORT BY Path ASC
+      LIMIT 400;
+    @position(520, 320)
+    RETURN $Working;
+  END IF;
+
+  @position(760, 200)
+  RETRIEVE $Rows FROM Owid.Dataset
+    WHERE contains(Path, $Explorer/Search)
+    SORT BY Path ASC
+    LIMIT 400;
+
+  @position(1060, 200)
+  RETURN $Rows;
+END;
+
+
+-- The fields of whatever is selected, for the pickers.
+CREATE OR REPLACE MICROFLOW Owid.DS_SelectedFields (
+  $Explorer: Owid.Explorer
+)
+  RETURNS List of Owid.Field AS $Fields
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Dataset FROM $Explorer/Owid.Explorer_Dataset;
+
+  @position(300, 200)
+  $Empty = CREATE LIST OF Owid.Field;
+
+  @position(460, 200)
+  IF $Dataset = empty THEN
+    @position(500, 320)
+    RETURN $Empty;
+  END IF;
+
+  @position(700, 200)
+  RETRIEVE $Found FROM $Dataset/Owid.Field_Dataset;
+
+  @position(880, 200)
+  $Fields = SORT($Found, Ordinal ASC);
+
+  @position(1060, 200)
+  RETURN $Fields;
+END;
+
+
+-- Select a table, and look at it if nobody has yet.
+--
+-- The probe is one range request against the parquet footer, so doing it on
+-- first selection costs about half a second and means the pickers are never
+-- empty when the panel opens. Re-reading is a separate button, because a
+-- table's columns change when its version does and not otherwise.
+CREATE OR REPLACE MICROFLOW Owid.ACT_SelectDataset (
+  $Explorer: Owid.Explorer,
+  $Dataset:  Owid.Dataset
+)
+BEGIN
+  @position(120, 200)
+  CHANGE $Explorer (Owid.Explorer_Dataset = $Dataset, Message = '') REFRESH;
+
+  @position(400, 200)
+  IF $Dataset/Probed = false THEN
+    @position(440, 320)
+    CALL MICROFLOW Owid.ACT_ProbeDataset (Dataset = $Dataset);
+  END IF;
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_ReprobeDataset (
+  $Explorer: Owid.Explorer
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Dataset FROM $Explorer/Owid.Explorer_Dataset;
+
+  @position(320, 200)
+  IF $Dataset != empty THEN
+    @position(360, 320)
+    CALL MICROFLOW Owid.ACT_ProbeDataset (Dataset = $Dataset);
+  END IF;
+END;
+
+
+-- Put a chart on the canvas, already configured.
+CREATE OR REPLACE MICROFLOW Owid.ACT_NewCard (
+  $Explorer: Owid.Explorer
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Dataset FROM $Explorer/Owid.Explorer_Dataset;
+
+  @position(320, 200)
+  IF $Dataset = empty THEN
+    @position(360, 320)
+    CHANGE $Explorer (Message = 'Pick a table on the left first.') REFRESH;
+    @position(660, 320)
+    RETURN;
+  END IF;
+
+  @position(560, 200)
+  IF $Dataset/Available = false THEN
+    @position(600, 440)
+    CHANGE $Explorer (Message = 'That table is in the catalogue but is not served, so there is nothing to chart.') REFRESH;
+    @position(1000, 440)
+    RETURN;
+  END IF;
+
+  @position(860, 200)
+  RETRIEVE $Fields FROM $Dataset/Owid.Field_Dataset;
+
+  @position(1040, 200)
+  $FYear = FIND($Fields, Name = 'year');
+
+  @position(1220, 200)
+  $FCountry = FIND($Fields, Name = 'country');
+
+  @position(1400, 200)
+  $FLocation = FIND($Fields, Name = 'location');
+
+  @position(1580, 200)
+  $FEntity = FIND($Fields, Name = 'entity');
+
+  @position(1760, 200)
+  $Dims = FILTER($Fields, IsMeasure = false);
+
+  @position(1940, 200)
+  $FirstDim = HEAD($Dims);
+
+  @position(2100, 200)
+  $Next = COUNT($Fields);
+
+  @position(2260, 200)
+  $Card = CREATE Owid.Card (
+    Title = $Dataset/TableName,
+    ChartType = Owid.ChartType.Bar,
+    Agg = Owid.AggType.Avg,
+    RowLimit = 5000,
+    SortOrder = 0,
+    Wide = false,
+    Owid.Card_Dataset = $Dataset
+  );
+
+  -- x, and the chart type that follows from it.
+  @position(2520, 200)
+  declare $XName String = '';
+
+  @position(2680, 200)
+  IF $FYear != empty THEN
+    @position(2720, 320)
+    CHANGE $Card (Owid.Card_X = $FYear, ChartType = Owid.ChartType.Line);
+    @position(3020, 320)
+    set $XName = $FYear/Name;
+  ELSE
+    @position(2720, 460)
+    IF $FirstDim != empty THEN
+      @position(2760, 580)
+      CHANGE $Card (Owid.Card_X = $FirstDim);
+      @position(3020, 580)
+      set $XName = $FirstDim/Name;
+    END IF;
+  END IF;
+
+  -- what splits it into series
+  @position(3320, 200)
+  declare $SName String = '';
+
+  @position(3480, 200)
+  IF $FCountry != empty THEN
+    @position(3520, 320)
+    CHANGE $Card (Owid.Card_Series = $FCountry);
+    @position(3780, 320)
+    set $SName = $FCountry/Name;
+  ELSE
+    @position(3520, 460)
+    IF $FLocation != empty THEN
+      @position(3560, 580)
+      CHANGE $Card (Owid.Card_Series = $FLocation);
+      @position(3820, 580)
+      set $SName = $FLocation/Name;
+    ELSE
+      @position(3560, 700)
+      IF $FEntity != empty THEN
+        @position(3600, 820)
+        CHANGE $Card (Owid.Card_Series = $FEntity);
+        @position(3860, 820)
+        set $SName = $FEntity/Name;
+      END IF;
+    END IF;
+  END IF;
+
+  -- The value: the first number that is not already spoken for.
+  --
+  -- Written as filter-then-remove rather than one compound filter because a
+  -- list expression that compares a member to an OUTER VARIABLE does not
+  -- compile -- CE0117 on the Filter activity, and the same for `and`. Comparing
+  -- a member to a LITERAL is fine, which is the whole vocabulary available
+  -- here. (FINDINGS #37.)
+  --
+  -- Only 'year' can actually collide: the split field is non-numeric by
+  -- construction, so it is never in this list to begin with.
+  @position(4200, 200)
+  $Values = FILTER($Fields, IsMeasure = true);
+
+  @position(4400, 200)
+  $YearValue = FIND($Values, Name = 'year');
+
+  @position(4600, 200)
+  IF $YearValue != empty THEN
+    @position(4640, 320)
+    REMOVE $YearValue FROM $Values;
+  END IF;
+
+  @position(4880, 200)
+  $FValue = HEAD($Values);
+
+  @position(5060, 200)
+  IF $FValue != empty THEN
+    @position(5100, 320)
+    CHANGE $Card (Owid.Card_Y = $FValue);
+  END IF;
+
+  @position(5340, 200)
+  COMMIT $Card;
+
+  -- A new card is the one you want to edit next, so the shelf follows it.
+  @position(5500, 200)
+  CHANGE $Explorer (Owid.Explorer_Card = $Card);
+
+  @position(5760, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer,
+    Note = 'Added a chart from ' + $Dataset/TableName + '. Use the shelf below to change it.');
+END;
+
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_DeleteCard (
+  $Explorer: Owid.Explorer,
+  $Card:     Owid.Card
+)
+BEGIN
+  @position(120, 200)
+  DELETE $Card;
+
+  @position(320, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Chart removed.');
+END;
+
+-- Reordering, because a canvas you cannot arrange is a list.
+CREATE OR REPLACE MICROFLOW Owid.ACT_CardUp (
+  $Explorer: Owid.Explorer,
+  $Card:     Owid.Card
+)
+BEGIN
+  @position(120, 200)
+  CHANGE $Card (SortOrder = $Card/SortOrder - 1) COMMIT;
+
+  @position(360, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = '');
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_CardDown (
+  $Explorer: Owid.Explorer,
+  $Card:     Owid.Card
+)
+BEGIN
+  @position(120, 200)
+  CHANGE $Card (SortOrder = $Card/SortOrder + 1) COMMIT;
+
+  @position(360, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = '');
+END;
+
+
+-- The pickers on a card's editor need that card's table's columns, which is a
+-- different question from "the columns of whatever is selected in the browser".
+CREATE OR REPLACE MICROFLOW Owid.DS_CardFields (
+  $Card: Owid.Card
+)
+  RETURNS List of Owid.Field AS $Fields
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Dataset FROM $Card/Owid.Card_Dataset;
+
+  @position(300, 200)
+  $Empty = CREATE LIST OF Owid.Field;
+
+  @position(460, 200)
+  IF $Dataset = empty THEN
+    @position(500, 320)
+    RETURN $Empty;
+  END IF;
+
+  @position(700, 200)
+  RETRIEVE $Found FROM $Dataset/Owid.Field_Dataset;
+
+  @position(880, 200)
+  $Fields = SORT($Found, Ordinal ASC);
+
+  @position(1060, 200)
+  RETURN $Fields;
+END;

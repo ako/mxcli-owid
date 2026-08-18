@@ -445,5 +445,7 @@ CREATE OR REPLACE PAGE Owid.Dashboard
 }
 ;
 
-CREATE OR REPLACE NAVIGATION Responsive
-  HOME PAGE Owid.Dashboard;
+-- Navigation used to be set here, and that made two files own one document:
+-- re-running this stage silently reverted stage 24's two-item menu to a bare
+-- home page. Stage 24 owns the navigation profile. (FINDINGS #27 again, and it
+-- bit again.)

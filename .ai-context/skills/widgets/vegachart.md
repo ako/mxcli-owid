@@ -14,7 +14,8 @@ PLUGGABLEWIDGET 'owidexplorer.widget.web.vegachart.VegaChart' widget1
 
 | Property | Type | Required | Default | Description |
 |----------|------|----------|---------|-------------|
-| `spec` | string | Yes |  | Vega-Lite or Vega JSON. Which language is used is decided by the spec's own $... |
+| `spec` | string |  |  | Vega-Lite or Vega JSON, authored here and fixed. Which language is used is de... |
+| `specSource` | attribute |  |  | A spec built by a microflow rather than authored here, for a chart whose shap... |
 | `chartData` | attribute |  |  | A JSON array of row objects, bound to the spec's named dataset (or to its top... |
 | `datasetName` | string |  | table | The name the spec uses to refer to the data (Vega-Lite: {"data": {"name": "ta... |
 | `selection` | attribute |  |  | Written with the clicked mark's datum as JSON. Only the datum's own scalar fi... |

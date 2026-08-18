@@ -1,0 +1,210 @@
+-- Stage 26: the explorer's model.
+--
+-- Board three is a chart builder over OWID's whole curated catalogue: pick a
+-- table out of 1,138, see its actual columns, choose a chart and what goes on
+-- each axis, and keep the result on a canvas that survives a reload.
+--
+-- The split that matters here is which half is stored:
+--
+--   STORED   the catalogue index (1,138 rows of metadata), each table's column
+--            list once it has been looked at, and the card DEFINITIONS -- what
+--            the user chose. All small, all slow-changing, and the canvas is
+--            worthless if it does not survive a reload.
+--
+--   LIVE     every number on every chart. A card holds no data; DS_Canvas runs
+--            its query against the remote parquet each time the page is drawn.
+--
+-- So this is not a retreat from board two's architecture, it is the same one
+-- with a metadata layer in front: the catalogue is a card index, not a copy of
+-- the library.
+
+CREATE OR MODIFY ENUMERATION Owid.ChartType (
+  Line    'Line',
+  Bar     'Bar',
+  Area    'Area',
+  Scatter 'Scatter',
+  Heatmap 'Heatmap',
+  Number  'Single number'
+);
+
+CREATE OR MODIFY ENUMERATION Owid.AggType (
+  NoAgg 'None (raw rows)',
+  Sum   'Sum',
+  Avg   'Average',
+  Min   'Minimum',
+  Max   'Maximum',
+  Count 'Count'
+);
+
+
+-- One row per table in the garden channel.
+--
+-- Path is the whole identity -- 'garden/un/2024-12-02/un_wpp_lt/un_wpp_lt' --
+-- and the data URL is that plus '.parquet'. It is unique, which is what lets a
+-- catalogue refresh update in place rather than duplicating.
+--
+-- Available is not redundant with Probed. The published index lists tables the
+-- CDN does not serve: garden/sdg/latest/... is in the catalogue with
+-- formats ['feather','parquet'] and 404s on both. Nothing in the index predicts
+-- it, so the only way to know is to ask, and the answer is worth keeping.
+@Position(100, 1100)
+CREATE OR MODIFY PERSISTENT ENTITY Owid.Dataset (
+  Path:         String(300) NOT NULL,
+  Namespace:    String(80),
+  DatasetName:  String(160),
+  Version:      String(40),
+  TableName:    String(160),
+  /** How many index dimensions the table declares; 2 is the usual country x year. */
+  Dims:         Integer DEFAULT 0,
+  Probed:       Boolean DEFAULT false,
+  Available:    Boolean DEFAULT false,
+  /** Why a probe failed, kept so the browser can say so instead of staying blank. */
+  ProbeNote:    String(300),
+  FieldCount:   Integer DEFAULT 0,
+  LastProbedAt: DateTime
+)
+INDEX (Path);
+
+-- A column of a probed table.
+--
+-- IsMeasure is decided from the SQL type, and it is the only classification the
+-- builder needs: a measure can be aggregated and put on a value axis, anything
+-- else can only group or label.
+@Position(500, 1100)
+CREATE OR MODIFY PERSISTENT ENTITY Owid.Field (
+  Name:      String(160) NOT NULL,
+  SqlType:   String(40),
+  Ordinal:   Integer DEFAULT 0,
+  IsMeasure: Boolean DEFAULT false
+);
+
+CREATE OR MODIFY ASSOCIATION Owid.Field_Dataset
+  FROM Owid.Field TO Owid.Dataset
+  TYPE Reference
+  DELETE_BEHAVIOR DELETE_AND_REFERENCES;
+
+
+-- A saved chart. The definition only -- what the user chose, never a number.
+--
+-- The four field choices are ASSOCIATIONS to Owid.Field rather than typed-in
+-- column names, which buys two things. A picker becomes an ordinary combo box
+-- over the table's real columns, so nobody has to remember that the column is
+-- called 'sp_dyn_le00_in'. And the reference is checked by the platform, so a
+-- card cannot name a column that does not exist -- the whitelist in CardSql is
+-- then a second line rather than the only one.
+--
+-- Delete behaviour is the default, DELETE_BUT_KEEP_REFERENCES: a column that
+-- disappears between dataset versions nulls the reference and the card says
+-- which axis it lost. Cascading would silently delete the user's chart because
+-- a source table was revised, which is not a trade anyone would accept.
+@Position(900, 1100)
+CREATE OR MODIFY PERSISTENT ENTITY Owid.Card (
+  Title:       String(120),
+  ChartType:   Enumeration(Owid.ChartType) NOT NULL,
+  Agg:         Enumeration(Owid.AggType) NOT NULL,
+  /** Compared as text, and bound rather than spliced -- see CardSql. */
+  FilterValue: String(200),
+  RowLimit:    Integer DEFAULT 5000,
+  SortOrder:   Integer DEFAULT 0,
+  /** Full width on the canvas, or half. */
+  Wide:        Boolean DEFAULT false
+);
+
+CREATE OR MODIFY ASSOCIATION Owid.Card_Dataset
+  FROM Owid.Card TO Owid.Dataset
+  TYPE Reference
+  DELETE_BEHAVIOR DELETE_AND_REFERENCES;
+
+CREATE OR MODIFY ASSOCIATION Owid.Card_X
+  FROM Owid.Card TO Owid.Field TYPE Reference
+  COMMENT 'The key across the bottom. For a heatmap, the horizontal axis.';
+
+CREATE OR MODIFY ASSOCIATION Owid.Card_Y
+  FROM Owid.Card TO Owid.Field TYPE Reference
+  COMMENT 'The value: up the side, or the colour of a heatmap cell.';
+
+CREATE OR MODIFY ASSOCIATION Owid.Card_Series
+  FROM Owid.Card TO Owid.Field TYPE Reference
+  COMMENT 'What splits the chart into series. For a heatmap, the vertical axis.';
+
+CREATE OR MODIFY ASSOCIATION Owid.Card_Filter
+  FROM Owid.Card TO Owid.Field TYPE Reference
+  COMMENT 'The column FilterValue is compared against, as text.';
+
+
+-- What a card looks like once it has been run: the spec, the data, and what it
+-- cost. Non-persistable, because none of it is worth keeping -- the card is the
+-- record and this is the render.
+@Position(1300, 1100)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.CardView (
+  Title:    String(160),
+  Subtitle: String(300),
+  SpecJson: String,
+  DataJson: String,
+  /** Empty when the card ran. Otherwise what went wrong, shown on the card. */
+  Note:     String(500),
+  Ms:       Long,
+  Rows:     Integer,
+  Wide:     Boolean DEFAULT false
+);
+
+CREATE OR MODIFY ASSOCIATION Owid.CardView_Card
+  FROM Owid.CardView TO Owid.Card
+  TYPE Reference
+  DELETE_BEHAVIOR DELETE_AND_REFERENCES;
+
+
+-- The page's own state: what is typed in the search box, what is selected,
+-- and which card the field shelf is aiming at.
+--
+-- Revision exists to make the canvas redraw. A microflow data source re-runs
+-- when its PARAMETER object is refreshed, so DS_Canvas takes this object and
+-- every action that changes a card bumps the number and refreshes -- otherwise
+-- the card changes in the database and the chart on screen does not move.
+@Position(1700, 1100)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.Explorer (
+  Search:       String(120),
+  Message:      String(500),
+  DatasetCount: Integer DEFAULT 0,
+  CardCount:    Integer DEFAULT 0,
+  Revision:     Integer DEFAULT 0,
+  /** Hide the indexed rows nobody has confirmed are still served. */
+  OnlyWorking:  Boolean DEFAULT true
+);
+
+-- The card the shelf assigns to. Nothing is selected until a card is created
+-- or its Edit button is pressed.
+CREATE OR MODIFY ASSOCIATION Owid.Explorer_Card
+  FROM Owid.Explorer TO Owid.Card
+  TYPE Reference;
+
+CREATE OR MODIFY ASSOCIATION Owid.Explorer_Dataset
+  FROM Owid.Explorer TO Owid.Dataset
+  TYPE Reference
+  DELETE_BEHAVIOR DELETE_AND_REFERENCES;
+
+
+-- Rows the connector hands back. Both are read shapes, not records.
+@Position(2100, 1100)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.CatRow (
+  Path: String(300), Namespace: String(80), DatasetName: String(160),
+  Version: String(40), TableName: String(160), Dims: Integer
+);
+
+@Position(2100, 1300)
+-- IsNum is decided in SQL rather than by matching type names in a microflow
+-- expression, because DECIMAL(18,3) and USMALLINT are both numbers and neither
+-- is in any list you would think to write.
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.DescRow (
+  ColName: String(160), ColType: String(80), IsNum: Boolean DEFAULT false
+);
+
+-- One row, one JSON document: the whole series for a card, built by DuckDB
+-- rather than by a loop in a microflow. to_json(list(struct_pack(...))) over
+-- the aggregate returns the array Vega wants, already shaped.
+@Position(2100, 1500)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.JsonRow (
+  J: String, N: Integer,
+  /** How many distinct series the split produced -- see CardSpec on legends. */
+  S: Integer DEFAULT 0
+);

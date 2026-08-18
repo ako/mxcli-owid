@@ -87,3 +87,51 @@ MOVE JAVA ACTION Owid.Key                TO FOLDER 'OData pushdown';
 MOVE JAVA ACTION Owid.FilterNumber       TO FOLDER 'OData pushdown';
 MOVE JAVA ACTION Owid.CallStatement      TO FOLDER 'OData pushdown';
 MOVE JAVA ACTION Owid.PathKey            TO FOLDER 'OData pushdown';
+
+-- ------------------------------------------------------------- board three
+--
+-- Added after the folders were first laid out. The shape holds: the catalogue
+-- and the builder are one board, and the pieces that read OWID's index sit
+-- with the connection they read it through.
+
+MOVE PAGE Owid.Explore                    TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.DS_Explorer           TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.DS_Canvas             TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.SUB_RunCard           TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.SUB_Touch             TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.ACT_ApplyCard         TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.ACT_NewCard           TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.ACT_EditCard          TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.ACT_DeleteCard        TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.ACT_CardUp            TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE MICROFLOW Owid.ACT_CardDown          TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE JAVA ACTION Owid.CardSql             TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE JAVA ACTION Owid.CardSpec            TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE ENUMERATION Owid.ChartType           TO FOLDER 'Board 3 - explorer/Canvas';
+MOVE ENUMERATION Owid.AggType             TO FOLDER 'Board 3 - explorer/Canvas';
+
+MOVE MICROFLOW Owid.DS_SelectedFields     TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.DS_CardFields         TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.ACT_ShelfX            TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.ACT_ShelfY            TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.ACT_ShelfSeries       TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.ACT_ShelfFilter       TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.ACT_ClearSeries       TO FOLDER 'Board 3 - explorer/Shelf';
+MOVE MICROFLOW Owid.ACT_ClearFilter       TO FOLDER 'Board 3 - explorer/Shelf';
+
+MOVE MICROFLOW Owid.DS_Datasets           TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_RefreshCatalog    TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_RefreshCatalogNow TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_ProbeDataset      TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_ReprobeDataset    TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_SelectDataset     TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_SeedDatasets      TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_SeedDatasetsNow   TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.SUB_SeedDataset       TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_VerifyBatch       TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_VerifyBatchNow    TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_SeedCanvas        TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.ACT_SeedCanvasNow     TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE MICROFLOW Owid.SUB_MakeCard          TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE CONSTANT Owid.CatalogUrl             TO FOLDER 'Board 3 - explorer/Catalogue';
+MOVE CONSTANT Owid.CatalogRoot            TO FOLDER 'Board 3 - explorer/Catalogue';
