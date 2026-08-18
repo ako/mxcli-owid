@@ -1,0 +1,54 @@
+-- Stage 18: run the OWID load on a task queue.
+--
+-- Until mxcli 443e80d there was no way to express this in MDL (FINDINGS #24)
+-- and the extract ran inline: ASU_Seed is the AfterStartupMicroflow, so first
+-- boot blocked for ~15s with the app unavailable, and the Refresh button held
+-- an HTTP request for the whole load. `in queue` now exists on both call types.
+--
+-- The Java action is NOT the thing queued, even though it is the actual worker:
+-- a queued Java action must return Nothing (CE7038) and RefreshOwidData returns
+-- the row count, which ACT_RefreshFromOwid needs to stamp the RefreshRun. So the
+-- microflow is queued instead and keeps its return value internally.
+
+CREATE OR MODIFY QUEUE Owid.RefreshQueue (
+  Parallelism: 1,
+  ClusterWide: true
+);
+
+-- Parallelism 1 is deliberate: RefreshOwidData replaces Country and Observation
+-- wholesale, so two concurrent runs would race on the same delete/insert.
+
+-- The queued unit of work. Returns nothing: there is no caller waiting for a
+-- value, and the outcome is recorded on RefreshRun instead.
+CREATE OR REPLACE MICROFLOW Owid.ACT_RefreshFromOwid ()
+BEGIN
+  $Run = CREATE Owid.RefreshRun (
+    StartedAt = [%CurrentDateTime%],
+    RowsLoaded = 0,
+    Succeeded = false
+  );
+  COMMIT $Run;
+
+  $Rows = CALL JAVA ACTION Owid.RefreshOwidData (
+    BaseUrl = @Owid.CatalogBaseUrl,
+    YearFrom = @Owid.YearFrom,
+    YearTo = @Owid.YearTo
+  );
+
+  CHANGE $Run (
+    CompletedAt = [%CurrentDateTime%],
+    RowsLoaded = $Rows,
+    Succeeded = true,
+    Message = 'Loaded ' + toString($Rows) + ' observations from OWID.'
+  );
+  COMMIT $Run;
+END;
+
+-- What callers use. Enqueues and returns immediately, so neither startup nor a
+-- button click waits for the extract. A page action cannot carry `in queue`
+-- itself, which is why this thin microflow exists between the two.
+CREATE OR REPLACE MICROFLOW Owid.ACT_RequestRefresh ()
+BEGIN
+  CALL MICROFLOW Owid.ACT_RefreshFromOwid () IN QUEUE Owid.RefreshQueue;
+  LOG INFO NODE 'Owid' 'Queued an OWID refresh.';
+END;

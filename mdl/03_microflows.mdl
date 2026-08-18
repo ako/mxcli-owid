@@ -1,36 +1,11 @@
 -- Stage 3: refresh, seed and view-state microflows.
 
--- Thin wrapper around the DuckDB load: stamp a RefreshRun, call the Java
--- action, record what happened. All the work is in RefreshOwidData.
-CREATE MICROFLOW Owid.ACT_RefreshFromOwid ()
-  RETURNS Owid.RefreshRun AS $Run
-BEGIN
-  $Run = CREATE Owid.RefreshRun (
-    StartedAt = [%CurrentDateTime%],
-    RowsLoaded = 0,
-    Succeeded = false
-  );
-  COMMIT $Run;
-
-  $Rows = CALL JAVA ACTION Owid.RefreshOwidData (
-    BaseUrl = @Owid.CatalogBaseUrl,
-    YearFrom = @Owid.YearFrom,
-    YearTo = @Owid.YearTo
-  );
-
-  CHANGE $Run (
-    CompletedAt = [%CurrentDateTime%],
-    RowsLoaded = $Rows,
-    Succeeded = true,
-    Message = 'Loaded ' + toString($Rows) + ' observations from OWID.'
-  );
-  COMMIT $Run;
-  RETURN $Run;
-END;
+-- ACT_RefreshFromOwid now lives in mdl/18_queue.mdl, where it is the queued
+-- unit of work and returns nothing.
 
 -- Seeds the two fixed reference tables and pulls the data on first boot.
 -- Idempotent: re-running adds nothing.
-CREATE MICROFLOW Owid.ASU_Seed ()
+CREATE OR REPLACE MICROFLOW Owid.ASU_Seed ()
   RETURNS Boolean
 BEGIN
   RETRIEVE $AnyIndicator FROM Owid.Indicator LIMIT 1;
@@ -92,28 +67,17 @@ BEGIN
   -- First boot has no observations; pull them. Takes a few seconds.
   RETRIEVE $AnyObservation FROM Owid.Observation LIMIT 1;
   IF $AnyObservation = empty THEN
-    $Run = CALL MICROFLOW Owid.ACT_RefreshFromOwid ();
-    LOG INFO NODE 'Owid' 'Seeded and loaded OWID data on first boot.';
+    -- Enqueued, not called: this is the AfterStartupMicroflow, and running the
+    -- extract inline blocked first boot for ~15s with the app unavailable. The
+    -- dashboard renders empty for a few seconds instead, then fills.
+    CALL MICROFLOW Owid.ACT_RequestRefresh ();
+    LOG INFO NODE 'Owid' 'Seeded; queued the first OWID load.';
   END IF;
   RETURN true;
 END;
 
--- Backs the header controls. Defaults to the mockup's opening state.
-CREATE MICROFLOW Owid.DS_ViewState ()
-  RETURNS Owid.ViewState AS $State
-BEGIN
-  $State = CREATE Owid.ViewState (
-    Year = @Owid.YearTo,
-    TopicId = 'life',
-    FocusCountry = 'Brazil',
-    ShowAfrica = true,
-    ShowAsia = true,
-    ShowAmericas = true,
-    ShowEurope = true,
-    ShowOceania = true,
-    LogXAxis = true,
-    ShowTrail = true,
-    TopN = 40
-  );
-  RETURN $State;
-END;
+-- DS_ViewState is NOT defined here. It lives in mdl/11_dsentry.mdl, where it
+-- also fills the chart payloads. An earlier copy in this file was made
+-- idempotent and re-run, which silently replaced the good version with one
+-- that returned an unfilled ViewState — the figures then rendered with empty
+-- labels and no data. Two files owning one document is the bug; stage 11 owns it.

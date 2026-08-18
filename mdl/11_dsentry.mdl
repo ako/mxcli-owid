@@ -1,6 +1,6 @@
 -- Stage 11: the dashboard's data source, and the refresh hook the controls call.
 
-CREATE MICROFLOW Owid.DS_ViewState ()
+CREATE OR REPLACE MICROFLOW Owid.DS_ViewState ()
   RETURNS Owid.ViewState AS $Filled
 BEGIN
   $State = CREATE Owid.ViewState (
@@ -23,7 +23,7 @@ END;
 
 -- Every control on the page calls this: it recomputes the payloads in place so
 -- all seven figures move together, the way the mockup's shared state does.
-CREATE MICROFLOW Owid.ACT_Apply ($State: Owid.ViewState)
+CREATE OR REPLACE MICROFLOW Owid.ACT_Apply ($State: Owid.ViewState)
 BEGIN
   -- SUB_FillViewState changes $State in place; the return is the same object.
   $Filled = CALL MICROFLOW Owid.SUB_FillViewState (State = $State);
