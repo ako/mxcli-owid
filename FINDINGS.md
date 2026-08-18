@@ -1150,3 +1150,54 @@ the element that actually holds the repeated children and put it there.
 .owid-ex-cards > ul { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
 .owid-ex-cards > ul > li { min-width: 0; }
 ```
+
+## 42. The expected answer should not arrive as an exception
+
+Pressing *Verify 25 more* filled the runtime log with a ~200-line
+`java.sql.SQLException` per table:
+
+```
+HTTP Error: Unable to connect to URL
+"https://catalog.ourworldindata.org/garden/bp/2022-07-14/energy_mix/energy_mix.parquet":
+404 (Not Found)
+  at org.duckdb.DuckDBNative.duckdb_jdbc_execute(Native Method)
+  ... ~40 frames, through the connector, the microflow engine and the queue
+```
+
+The `ON ERROR` handler worked — the dataset was marked unavailable with a note,
+and the batch carried on. The log was still unreadable, and that is the actual
+bug. **404 is not an error here; it is the answer.** The catalogue is three
+years stale (#39), so most of the 1,138 paths in it are gone, and a probe that
+finds nothing has done its job. Discovering that by making DuckDB fail turns the
+common case into an exception, and an exception into 200 lines nobody will read.
+
+The fix is to ask the cheaper question first — one `HEAD`, in Java:
+
+```java
+c = (java.net.HttpURLConnection) java.net.URI.create(Url).toURL().openConnection();
+c.setRequestMethod("HEAD");
+return java.lang.Long.valueOf(c.getResponseCode());   // 404 is a value, not a throw
+```
+
+`ACT_ProbeDataset` now checks the status before it asks DuckDB for anything, and
+writes an accurate note for each outcome — *the file is not served (HTTP 404)*
+against *could not reach the catalogue* (status 0), which the exception path
+could not tell apart. The `DESCRIBE`'s `ON ERROR` stays, as a backstop for the
+failures that really are exceptional.
+
+It is faster too, and by more than the round trip saved. A batch of 25 mostly
+missing tables:
+
+| | log lines | click to done |
+|---|---|---|
+| DuckDB decides | 4,151 | 13.7 s |
+| `HEAD` first | 1 | 7.1 s |
+
+Both batches were 25 catalogue paths of which all but a couple were gone, so
+they are the same work; the difference is only in who was asked to find that
+out.
+
+Java's `HttpURLConnection` reaches the catalogue through this container's proxy
+unaided, because `JAVA_TOOL_OPTIONS` already hands the JVM the proxy host and
+the truststore — worth knowing before writing anything that fetches a URL from a
+Mendix Java action.

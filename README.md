@@ -260,12 +260,16 @@ So the browser runs on two sources, and says so. **Load the verified set** seeds
 eleven paths checked by hand, so the page opens on tables that work. **Pull the
 index** adds the 1,138 for breadth. **Verify 25 more** probes them in batches
 and writes down which still answer, which is what makes the *"only tables
-confirmed to work"* filter true rather than a guess. **Example canvas** builds
+confirmed to work"* filter true rather than a guess. A probe asks HTTP for the
+status before it asks DuckDB for the columns, because a missing file is the
+ordinary outcome here and letting the query engine discover it turns the common
+case into a stack trace (#42). **Example canvas** builds
 the four cards above. `FINDINGS.md` #39 has the full account.
 
 | | |
 | --- | --- |
 | Catalogue pull, 1,138 rows indexed | ~10 s, on the queue |
+| Verify batch, 25 paths | 7.1 s |
 | Column read on opening a table | ~0.5 s, one range request |
 | First card on a cold table, 4,311 rows aggregated | 1.4–1.9 s |
 | Same card after a change (warm connection) | 260–350 ms |

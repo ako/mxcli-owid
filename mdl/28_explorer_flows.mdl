@@ -75,6 +75,49 @@ BEGIN
 END;
 
 
+-- Does this file exist?
+--
+-- This is here because of what the log looked like without it. The published
+-- index is mostly dead links (stage 33), so a verify pass asks DuckDB to read
+-- twenty-five files that are not there, and DuckDB reports a missing file by
+-- throwing. The microflow caught every one and wrote the note it was supposed
+-- to -- and Mendix still logged the full JDBC stack trace each time. Two
+-- hundred lines of exception for the single most predictable outcome in the
+-- whole application.
+--
+-- An expected answer should not arrive as an exception. HEAD returns 404 as a
+-- STATUS CODE, so the common case stops being exceptional: no throw, nothing
+-- logged, and about 220 ms rather than the second DuckDB spends opening a
+-- connection in order to fail. The DESCRIBE below keeps its error handler for
+-- things that genuinely are exceptional -- a corrupt file, a network drop --
+-- and those are now worth the stack trace they print.
+--
+-- Returns the HTTP status, or 0 if the host could not be reached at all: the
+-- two are different problems and the browser says which.
+CREATE OR MODIFY JAVA ACTION Owid.UrlStatus (
+  Url: String NOT NULL
+) RETURNS Long
+EXPOSED AS 'HTTP status of a URL' IN 'Explorer'
+AS $$
+java.net.HttpURLConnection c = null;
+try {
+    c = (java.net.HttpURLConnection) java.net.URI.create(Url).toURL().openConnection();
+    c.setRequestMethod("HEAD");
+    c.setConnectTimeout(8000);
+    c.setReadTimeout(8000);
+    c.setInstanceFollowRedirects(true);
+    return java.lang.Long.valueOf(c.getResponseCode());
+} catch (java.lang.Exception e) {
+    // Unreachable is not the same as absent, and the caller distinguishes them.
+    return java.lang.Long.valueOf(0L);
+} finally {
+    if (c != null) {
+        c.disconnect();
+    }
+}
+$$;
+
+
 -- Look at one table.
 --
 -- DESCRIBE reads the parquet footer, so this is one range request and well
@@ -89,24 +132,51 @@ BEGIN
   @position(120, 200)
   declare $Url String = @Owid.CatalogRoot + $Dataset/Path + '.parquet';
 
-  @position(300, 200)
+  -- Ask HTTP before asking DuckDB. A missing file is the ordinary case here,
+  -- and this is what keeps it from being logged as a failure.
+  @position(280, 200)
+  $Code = CALL JAVA ACTION Owid.UrlStatus (Url = $Url);
+
+  @position(440, 200)
+  IF $Code != 200 THEN
+    @position(480, 320)
+    declare $Why String = 'The catalogue lists this table but the file is not served (HTTP '
+      + toString($Code) + ').';
+
+    @position(760, 320)
+    IF $Code = 0 THEN
+      @position(800, 440)
+      set $Why = 'Could not reach the catalogue to check this table.';
+    END IF;
+
+    @position(1060, 320)
+    CHANGE $Dataset (
+      Probed = true, Available = false, FieldCount = 0,
+      ProbeNote = $Why, LastProbedAt = [%CurrentDateTime%]
+    ) COMMIT REFRESH;
+
+    @position(1360, 320)
+    RETURN;
+  END IF;
+
+  @position(1560, 200)
   declare $Sql String = 'SELECT column_name, column_type, regexp_matches(column_type, '
     + '''^(BIGINT|HUGEINT|INTEGER|SMALLINT|TINYINT|UBIGINT|UINTEGER|USMALLINT|UTINYINT'
     + '|DOUBLE|FLOAT|REAL|DECIMAL|NUMERIC)'') AS is_num FROM (DESCRIBE SELECT * FROM '
     + 'read_parquet(''' + $Url + '''))';
 
-  @position(520, 200)
+  @position(1740, 200)
   RETRIEVE $Old FROM $Dataset/Owid.Field_Dataset;
 
-  @position(700, 200)
+  @position(1900, 200)
   $Cols = EXECUTE DATABASE QUERY Owid.OwidDuck.Describe DYNAMIC $Sql () ON ERROR {
-    @position(740, 340)
+    @position(1940, 460)
     CHANGE $Dataset (
       Probed = true, Available = false,
       ProbeNote = 'The catalogue lists this table but the file is not served.',
       LastProbedAt = [%CurrentDateTime%]
     ) COMMIT REFRESH;
-    @position(1060, 340)
+    @position(2260, 460)
     RETURN;
   };
 
@@ -116,26 +186,26 @@ BEGIN
   -- references on each probe -- the user's charts would come apart because
   -- somebody pressed refresh. So: add what is new, drop what is gone, and
   -- leave the rest alone with their identities intact.
-  @position(940, 200)
+  @position(2100, 200)
   declare $I Integer = 0;
 
-  @position(1100, 200)
+  @position(2260, 200)
   LOOP $C IN $Cols BEGIN
-    @position(1140, 320)
+    @position(2300, 320)
     set $I = $I + 1;
 
-    @position(1300, 320)
+    @position(2460, 320)
     $Match = FIND($Old, Name = $C/ColName);
 
-    @position(1460, 320)
+    @position(2620, 320)
     IF $Match = empty THEN
-      @position(1500, 440)
+      @position(2660, 440)
       $F = CREATE Owid.Field (
         Name = $C/ColName, SqlType = $C/ColType, Ordinal = $I,
         IsMeasure = $C/IsNum, Owid.Field_Dataset = $Dataset
       ) COMMIT;
     ELSE
-      @position(1500, 560)
+      @position(2660, 560)
       CHANGE $Match (SqlType = $C/ColType, Ordinal = $I, IsMeasure = $C/IsNum) COMMIT;
     END IF;
   END LOOP;
@@ -148,25 +218,25 @@ BEGIN
   -- compile -- CE0117 on the Find activity, no further detail -- while FIND
   -- over a retrieved list of the same shape is fine. The pipes matter: without
   -- them 'year' would match 'year_of_birth'. (FINDINGS #37.)
-  @position(1900, 200)
+  @position(3060, 200)
   declare $Live String = '|';
 
-  @position(2040, 200)
+  @position(3200, 200)
   LOOP $C2 IN $Cols BEGIN
-    @position(2080, 320)
+    @position(3240, 320)
     set $Live = $Live + $C2/ColName + '|';
   END LOOP;
 
-  @position(2260, 200)
+  @position(3420, 200)
   LOOP $O IN $Old BEGIN
-    @position(2300, 320)
+    @position(3460, 320)
     IF contains($Live, '|' + $O/Name + '|') = false THEN
-      @position(2340, 440)
+      @position(3500, 440)
       DELETE $O;
     END IF;
   END LOOP;
 
-  @position(2400, 200)
+  @position(3700, 200)
   CHANGE $Dataset (
     Probed = true, Available = true, ProbeNote = '', FieldCount = $I,
     LastProbedAt = [%CurrentDateTime%]
