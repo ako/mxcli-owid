@@ -474,7 +474,7 @@ body text **14.79:1**, headers **4.52:1** — both pass WCAG AA.
 **Method note:** this class of bug is invisible to a default headless run.
 Render at `colorScheme: 'dark'` as well as light before calling a UI done.
 
-## 24. Task queues on call activities — PARTLY RESOLVED upstream, see #25
+## 24. ~~Task queues on call activities~~ — FULLY RESOLVED, see #27
 
 **Update: `ako/mxcli` main (`4f893ce`) has since acted on this — but not by
 adding `in queue`. See #25 for what actually shipped, which is more important
@@ -649,3 +649,52 @@ treating a `DESCRIBE` round-trip as proof. Here `DESCRIBE` was itself the
 lossy layer — a correct write, read back incorrectly, so round-tripping the
 output *destroyed* the thing it was meant to verify. A round trip proves the
 pair agree, not that either is right.
+
+## 27. FIXED: `IN QUEUE` landed, and the refresh no longer blocks startup
+
+`ako/mxcli` main at `443e80d` implements the clause on **both** call types, in
+the shape #24 proposed. The dashboard now uses it.
+
+```sql
+call microflow  Owid.ACT_RefreshFromOwid () in queue Owid.RefreshQueue;
+call java action Ops.RefreshData(Url = $Url) in queue Ops.OrderProcessing;
+```
+
+`describe microflow` renders the clause back, so the binding round-trips — which
+also retires the guard from #25 for scripts that restate it.
+
+### The trap that shaped the design
+
+**A queued Java action must return Nothing** — CE7038. `RefreshOwidData` returns
+the row count, which `ACT_RefreshFromOwid` needs to stamp the `RefreshRun`, so
+the *Java action* is not what gets queued even though it is the actual worker.
+The microflow is queued instead and keeps its return value internally. A page
+action cannot carry `in queue` either, hence a thin `ACT_RequestRefresh` between
+the button and the work.
+
+`Parallelism: 1` is deliberate: the load replaces `Country` and `Observation`
+wholesale, so two concurrent runs would race on the same delete/insert.
+
+### Measured, on a cold boot with the tables emptied
+
+| | |
+| --- | --- |
+| Queue registered | `Owid.RefreshQueue → Parallelism: 1 (cluster wide)` |
+| App available | **07:58:36.262** |
+| Load ran | **07:58:36 → 07:58:52** (16 s) |
+| Result | `Loaded 13760 observations from OWID.` |
+
+The app served for the whole 16 seconds it previously blocked for.
+
+### The self-inflicted regression, worth more than the feature
+
+Wiring this up, the dashboard came back with empty axis labels and 28 Vega
+warnings. Not the queue: **two files owned one document.** `DS_ViewState` was
+defined in stage 3 (a stub returning an unfilled ViewState) *and* stage 11 (the
+real one that fills the payloads). Stage 3's copy was harmless while it was
+`CREATE MICROFLOW` — it simply failed as "already exists". Making it
+`CREATE OR REPLACE` so a re-run would not error turned that silent failure into
+a silent **clobber**, and stage 3 runs before stage 11.
+
+Idempotence is not free: `CREATE OR REPLACE` converts "this script is redundant"
+into "this script wins". The stub is deleted; stage 11 owns the document.

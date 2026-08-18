@@ -438,8 +438,8 @@ CREATE OR REPLACE PAGE Owid.Dashboard
 
     FOOTER pageFooter {
       DYNAMICTEXT footNote (Content: 'Live from Our World in Data · read by DuckDB from the public parquet catalogue · published at /odata/owid/', Class: 'owid-foot')
-      ACTIONBUTTON btnRefresh (Caption: 'Refresh from OWID',
-        Action: MICROFLOW Owid.ACT_RefreshFromOwid, ButtonStyle: Primary)
+      ACTIONBUTTON btnRefresh (Caption: 'Refresh from OWID (queued)',
+        Action: MICROFLOW Owid.ACT_RequestRefresh, ButtonStyle: Primary)
     }
   }
 }
