@@ -49,6 +49,8 @@ CREATE OR REPLACE PAGE Owid.Explore
           Action: MICROFLOW Owid.ACT_RefreshCatalog, ButtonStyle: Default)
         ACTIONBUTTON btnVerify (Caption: 'Verify 25 more',
           Action: MICROFLOW Owid.ACT_VerifyBatch, ButtonStyle: Default)
+        ACTIONBUTTON btnExample (Caption: 'Example canvas',
+          Action: MICROFLOW Owid.ACT_SeedCanvas, ButtonStyle: Default)
       }
       LISTVIEW lvSets (DataSource: MICROFLOW Owid.DS_Datasets(Explorer: $currentObject),
                        Class: 'owid-ex-sets') {

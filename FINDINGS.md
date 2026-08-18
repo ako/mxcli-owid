@@ -1125,3 +1125,28 @@ Three things that had to be got right:
   turned off above twelve, and the card's own caption says
   `153 series, legend suppressed` — which is the difference between hiding
   something and saying so.
+
+## 41. The list view's grid goes on the `ul`, not on the list view
+
+Board three's canvas laid four cards out in one column instead of two. The CSS
+was right and applied to the wrong element:
+
+```
+div.mx-listview.owid-ex-cards [689x2054] display=grid
+  ul.                          [334x2038] display=block     <- one child
+    li.mx-name-index-0         [334x526]
+```
+
+Mendix renders a list view as a div wrapping a `ul` wrapping one `li` per row,
+so `display: grid` on the widget has exactly one grid item and every card
+stacks. This is the same shape as `.owid-page > .mx-dataview-content` from
+board one (#13) — a data view nests its content in a wrapper too — and it caught
+this project twice, in two different widgets.
+
+The rule generalises: **never put a grid on a Mendix widget's own class.** Find
+the element that actually holds the repeated children and put it there.
+
+```scss
+.owid-ex-cards > ul { display: grid; grid-template-columns: repeat(2, minmax(0,1fr)); }
+.owid-ex-cards > ul > li { min-width: 0; }
+```

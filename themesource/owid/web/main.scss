@@ -697,10 +697,22 @@
 }
 
 /* --- the canvas --------------------------------------------------------- */
-.owid-ex-cards {
+/* The grid goes on the UL, not on the list view.
+   Same trap as .owid-page > .mx-dataview-content on board one and it caught me
+   twice: Mendix's list view is a div wrapping a ul wrapping one li per row, so
+   a grid on the widget has exactly one child and every card stacks. */
+.owid-ex-cards > ul {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
   gap: var(--owid-gap);
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.owid-ex-cards > ul > li {
+  min-width: 0;
+  border: 0;
+  padding: 0;
 }
 .owid-ex-cardbox { min-width: 0; }
 
@@ -738,7 +750,7 @@
   .owid-ex-shelf    { grid-column: 1; }
   .owid-ex-settings { grid-column: 1; }
   .owid-ex-canvas   { grid-column: 2; grid-row: 2 / 6; }
-  .owid-ex-cards    { grid-template-columns: 1fr; }
+  .owid-ex-cards > ul { grid-template-columns: 1fr; }
 }
 @media (max-width: 900px) {
   .owid-explore > .mx-dataview-content { grid-template-columns: 1fr; }
