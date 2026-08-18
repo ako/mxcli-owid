@@ -2,7 +2,7 @@
 -- filter, then fill every chart payload. Called as the dashboard's data source
 -- and again after any control changes, so one flow drives the whole page.
 
-CREATE MICROFLOW Owid.SUB_FillViewState ($State: Owid.ViewState)
+CREATE OR REPLACE MICROFLOW Owid.SUB_FillViewState ($State: Owid.ViewState)
   RETURNS Owid.ViewState AS $State
 BEGIN
   -- The enum's own name is the TopicId ('life', 'child', ...), so the radio
@@ -61,10 +61,9 @@ BEGIN
     Kind = 'slope', XKey = $Topic/XKey, YKey = $Topic/YKey,
     Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
   );
-  $Trail = CALL JAVA ACTION Owid.BuildChartJson (
-    Kind = 'trail', XKey = $Topic/XKey, YKey = $Topic/YKey,
-    Yr = $State/Year, Regions = $Csv, Focus = $State/FocusCountry, TopN = $State/TopN
-  );
+  -- 'trail' was a sixth payload for a figure that was never built. It cost an
+  -- OQL query on every state change and reached no chart, so it is gone; the
+  -- Kind is still handled in BuildChartJson if a trail figure is ever wanted.
 
   RETRIEVE $Countries FROM Owid.Country;
   $N = COUNT($Countries);
@@ -74,7 +73,6 @@ BEGIN
     SeriesJson = $Series,
     SparkJson = $Spark,
     SlopeJson = $Slope,
-    TrailJson = $Trail,
     CountryCount = $N
   ) REFRESH;
   RETURN $State;

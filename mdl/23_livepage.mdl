@@ -1,0 +1,401 @@
+-- Stage 23: page two, on live data.
+--
+-- Page one holds 13,760 rows in Mendix entities and publishes those. This page
+-- holds nothing. Every figure below is a Vega spec whose data property is a URL
+-- on this app's own /odata/live/ service, so the browser fetches it directly:
+-- GET -> read microflow -> OData pushdown -> DuckDB -> remote parquet -> JSON,
+-- and nothing is written anywhere on the way back.
+--
+-- What that buys, and what it costs, are both on the page. The strip under the
+-- header prints the milliseconds a real probe query took at page load, because
+-- "live" is a claim about latency and a page that makes the claim should show
+-- the number.
+--
+-- FIG 01 is a full Vega spec rather than Vega-Lite, for one reason: its country
+-- selector is a Vega signal, and the data URL is built from it, so changing the
+-- select re-issues the request. Vega-Lite has no way to put a signal in a data
+-- URL. The widget dispatches on the spec's own $schema, so both languages sit
+-- on the same page with no switch anywhere.
+--
+-- FIG 01 is the one figure whose whole content is its gradient, so the colour
+-- ramp is load-bearing rather than decorative. Death rates run from 0.02 to
+-- 630 per 1,000 -- four and a half orders of magnitude -- and most of the
+-- surface sits at old age, where the values are highest. A ramp with too few
+-- stops flattens everything above about age 40 into one near-black and the
+-- structure vanishes. Seven stops, evenly spaced in log space, carry the
+-- brand''s steel blue from paper white to near-black with the luminance
+-- monotone throughout, which is what a single-hue ramp has to be to read as
+-- an ordering rather than a pattern.
+--
+-- No single quotes appear in any spec: the OData string delimiters are written
+-- %27 and the Vega expressions use escaped double quotes. That is not
+-- fastidiousness -- MDL doubles single quotes inside string literals, and a
+-- spec is 60 lines of JSON in which one missed pair is a parse error a long way
+-- from where it was typed.
+
+CREATE OR REPLACE PAGE Owid.LiveDashboard
+(
+  Title: 'The Mortality Surface',
+  Layout: Atlas_Core.Atlas_Default,
+  Url: 'live'
+)
+{
+  DATAVIEW dvLive (DataSource: MICROFLOW Owid.DS_LiveState, Class: 'owid-page owid-live') {
+
+    CONTAINER header (Class: 'owid-header') {
+      CONTAINER headerLeft (Class: 'owid-header-left') {
+        DYNAMICTEXT kicker (Content: 'UN World Population Prospects 2024 · read per request', Class: 'owid-kicker')
+        DYNAMICTEXT title (Content: 'The Mortality Surface', Class: 'owid-title')
+      }
+      CONTAINER headerRight (Class: 'owid-header-right') {
+        DYNAMICTEXT scope (Content: '{1} places · 1950–2100 · single year of age',
+          ContentParams: [{1} = PlaceCount], Class: 'owid-meta')
+        DYNAMICTEXT focusLine (Content: 'Nothing stored', Class: 'owid-focus')
+      }
+    }
+
+    -- The honesty strip. Every number here was measured, not asserted.
+    CONTAINER strip (Class: 'owid-live-strip') {
+      CONTAINER s1 (Class: 'owid-stat') {
+        DYNAMICTEXT s1v (Content: '{1} ms', ContentParams: [{1} = QueryMs], Class: 'owid-stat-value')
+        DYNAMICTEXT s1l (Content: 'Probe query at page load, through the connector', Class: 'owid-stat-label')
+      }
+      CONTAINER s2 (Class: 'owid-stat') {
+        DYNAMICTEXT s2v (Content: '11.9 M', Class: 'owid-stat-value')
+        DYNAMICTEXT s2l (Content: 'Life-table rows reachable, of which 0 are in this app', Class: 'owid-stat-label')
+      }
+      CONTAINER s3 (Class: 'owid-stat') {
+        DYNAMICTEXT s3v (Content: '483 MB', Class: 'owid-stat-value')
+        DYNAMICTEXT s3l (Content: 'Parquet behind the service, never downloaded', Class: 'owid-stat-label')
+      }
+      CONTAINER s4 (Class: 'owid-stat') {
+        DYNAMICTEXT s4v (Content: '{1}', ContentParams: [{1} = AsOf], Class: 'owid-stat-value owid-stat-small')
+        DYNAMICTEXT s4l (Content: 'When this page asked. Reload and it asks again.', Class: 'owid-stat-label')
+      }
+    }
+
+    -- FIG 01 — the Lexis surface. 7,474 rects: 74 years by 101 single ages.
+    -- The select is a Vega signal, so changing it rebuilds the URL and refetches.
+    CONTAINER figSurface (Class: 'owid-fig owid-live-8 blueprint') {
+      DYNAMICTEXT hSurface (Content: 'Death rate by age and year', Class: 'owid-fig-title')
+      DYNAMICTEXT sSurface (Content: 'One cell per age per year, darker is deadlier, on a log scale. Change the place and the browser fetches a new surface from /odata/live/LifeTable.  FIG 01', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartSurface (
+        datasetName: '',
+        chartHeight: 0,
+        renderer: 'canvas',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega/v6.json",
+  "height": 420,
+  "padding": 0,
+  "background": null,
+  "autosize": {"type": "fit-x", "contains": "padding", "resize": true},
+  "config": {
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "grid": false,
+             "titleFont": "Barlow Condensed", "titleFontSize": 11,
+             "titleColor": "#6c6f72", "titleFontWeight": 400},
+    "legend": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+               "titleFont": "Barlow Condensed", "titleFontSize": 11,
+               "titleColor": "#6c6f72", "titleFontWeight": 400}
+  },
+  "signals": [
+    {
+      "name": "width",
+      "init": "isFinite(containerSize()[0]) ? containerSize()[0] : 640",
+      "on": [{"events": "window:resize",
+              "update": "isFinite(containerSize()[0]) ? containerSize()[0] : 640"}]
+    },
+    {
+      "name": "place",
+      "value": "Japan",
+      "bind": {
+        "input": "select",
+        "name": "Place ",
+        "options": ["World","Japan","South Korea","China","India","Bangladesh",
+                    "Indonesia","Vietnam","Iran","Turkey","Russia","Ukraine",
+                    "Germany","Italy","Spain","France","United Kingdom","Sweden",
+                    "Poland","United States","Mexico","Brazil","Chile","Egypt",
+                    "Nigeria","Ethiopia","Kenya","South Africa","Rwanda",
+                    "Cambodia","Afghanistan","Haiti"]
+      }
+    }
+  ],
+  "data": [
+    {
+      "name": "surface",
+      "url": {"signal": "\"/odata/live/LifeTable?$filter=location%20eq%20%27\" + place + \"%27%20and%20sex%20eq%20%27total%27&$top=20000\""},
+      "format": {"type": "json", "property": "value"},
+      "transform": [
+        {"type": "filter", "expr": "datum.mx != null && datum.mx > 0"},
+        {"type": "formula", "as": "lm", "expr": "log(datum.mx) / LN10"}
+      ]
+    }
+  ],
+  "scales": [
+    {"name": "x", "type": "linear", "domain": [1950, 2024], "range": "width", "nice": false, "zero": false},
+    {"name": "y", "type": "linear", "domain": [0, 101], "range": "height", "nice": false, "zero": false},
+    {"name": "colour", "type": "linear", "clamp": true,
+     "domain": [-1.7, -0.95, -0.2, 0.55, 1.3, 2.05, 2.8],
+     "range": ["#fcfdfe", "#dde8f1", "#b0cae1", "#7ea7cd", "#4f74a0", "#2c4763", "#0e161d"]}
+  ],
+  "axes": [
+    {"orient": "bottom", "scale": "x", "format": "d", "tickCount": 8, "title": "Year"},
+    {"orient": "left", "scale": "y", "format": "d", "tickCount": 10, "title": "Age"}
+  ],
+  "legends": [
+    {"fill": "colour", "type": "gradient", "title": "Deaths per 1,000",
+     "direction": "vertical", "gradientLength": 190, "gradientThickness": 9,
+     "values": [-1.7, -1, 0, 1, 2, 2.8],
+     "encode": {"labels": {"update": {
+       "text": {"signal": "format(pow(10, datum.value), datum.value < 0 ? \".2f\" : \".0f\")"}
+     }}}}
+  ],
+  "marks": [
+    {
+      "type": "rect",
+      "from": {"data": "surface"},
+      "encode": {"update": {
+        "x":  {"scale": "x", "field": "year"},
+        "x2": {"scale": "x", "signal": "datum.year + 1"},
+        "y":  {"scale": "y", "field": "age"},
+        "y2": {"scale": "y", "signal": "datum.age + 1"},
+        "fill": {"scale": "colour", "field": "lm"},
+        "tooltip": {"signal": "{year: datum.year, age: datum.age, per1000: format(datum.mx, \".3f\"), yearsLeft: format(datum.ex, \".1f\")}"}
+      }}
+    }
+  ]
+}')
+    }
+
+    -- FIG 02 — the same question the surface answers, collapsed to one number
+    -- per year, and carried past the present into the UN Medium variant.
+    CONTAINER figBathtub (Class: 'owid-fig owid-live-4 blueprint') {
+      DYNAMICTEXT hBathtub (Content: 'The bathtub, three times', Class: 'owid-fig-title')
+      DYNAMICTEXT sBathtub (Content: 'World risk of dying within the year, by age, log scale. The infant shoulder is what fell.  FIG 02', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartBathtub (
+        datasetName: '',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "/odata/live/LifeTable?$filter=location%20eq%20%27World%27%20and%20sex%20eq%20%27total%27%20and%20(year%20eq%201950%20or%20year%20eq%201990%20or%20year%20eq%202023)&$top=1000",
+    "format": {"type": "json", "property": "value"}
+  },
+  "width": "container",
+  "height": 300,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#ebebec",
+             "titleFont": "Barlow Condensed", "titleFontSize": 11,
+             "titleColor": "#6c6f72", "titleFontWeight": 400},
+    "legend": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+               "title": null, "symbolStrokeWidth": 2, "orient": "bottom", "direction": "horizontal"}
+  },
+  "transform": [{"filter": "datum.qx != null && datum.qx > 0"}],
+  "mark": {"type": "line", "strokeWidth": 1.6, "interpolate": "monotone"},
+  "encoding": {
+    "x": {"field": "age", "type": "quantitative", "scale": {"nice": false, "domain": [0, 100]},
+          "axis": {"tickCount": 6, "grid": true, "title": "Age"}},
+    "y": {"field": "qx", "type": "quantitative", "scale": {"type": "log", "nice": false},
+          "axis": {"grid": true, "format": ".2~f", "title": "Chance of dying this year (%)"}},
+    "color": {"field": "year", "type": "nominal",
+              "scale": {"domain": [1950, 1990, 2023], "range": ["#a9a9ad", "#749dc4", "#1d2d3d"]}},
+    "tooltip": [
+      {"field": "year", "type": "nominal", "title": "Year"},
+      {"field": "age", "type": "quantitative", "title": "Age"},
+      {"field": "qx", "type": "quantitative", "title": "% dying", "format": ".3f"}
+    ]
+  }
+}')
+    }
+
+    -- FIG 03 — observed to 2023 and Medium-variant projection to 2100 in one
+    -- line each, with the handover shaded rather than broken.
+    CONTAINER figLe (Class: 'owid-fig owid-live-7 blueprint') {
+      DYNAMICTEXT hLe (Content: 'Life expectancy at birth, 1950 to 2100', Class: 'owid-fig-title')
+      DYNAMICTEXT sLe (Content: 'Solid ground to 2023, then the UN Medium variant. Eight countries, one request.  FIG 03', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartLe (
+        datasetName: '',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "width": "container",
+  "height": 330,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#ebebec",
+             "titleFont": "Barlow Condensed", "titleFontSize": 11,
+             "titleColor": "#6c6f72", "titleFontWeight": 400},
+    "legend": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+               "title": null, "symbolStrokeWidth": 2, "orient": "bottom", "direction": "horizontal", "columns": 4}
+  },
+  "layer": [
+    {
+      "data": {"values": [{"a": 2023.5, "b": 2100}]},
+      "mark": {"type": "rect", "fill": "#1d2d3d", "opacity": 0.05},
+      "encoding": {
+        "x": {"field": "a", "type": "quantitative", "scale": {"nice": false, "domain": [1950, 2100]}, "axis": null},
+        "x2": {"field": "b"}
+      }
+    },
+    {
+      "data": {
+        "url": "/odata/live/LifeExpectancy?$filter=sex%20eq%20%27total%27%20and%20(location%20eq%20%27Japan%27%20or%20location%20eq%20%27South%20Korea%27%20or%20location%20eq%20%27United%20States%27%20or%20location%20eq%20%27China%27%20or%20location%20eq%20%27India%27%20or%20location%20eq%20%27Brazil%27%20or%20location%20eq%20%27Nigeria%27%20or%20location%20eq%20%27Russia%27)&$orderby=location,year&$top=5000",
+        "format": {"type": "json", "property": "value"}
+      },
+      "transform": [{"filter": "datum.ex != null"}],
+      "mark": {"type": "line", "strokeWidth": 1.5, "clip": true},
+      "encoding": {
+        "x": {"field": "year", "type": "quantitative", "scale": {"nice": false, "domain": [1950, 2100]},
+              "axis": {"format": "d", "tickCount": 8, "grid": true, "title": null}},
+        "y": {"field": "ex", "type": "quantitative", "scale": {"zero": false, "nice": false},
+              "axis": {"tickCount": 6, "grid": true, "title": "Years"}},
+        "color": {"field": "location", "type": "nominal",
+                  "scale": {"domain": ["Japan","South Korea","United States","China","India","Brazil","Nigeria","Russia"],
+                            "range": ["#1d2d3d","#31506d","#416180","#597ea3","#749dc4","#94bce3","#b8712f","#a9a9ad"]}},
+        "tooltip": [
+          {"field": "location", "title": "Place"},
+          {"field": "year", "type": "quantitative", "title": "Year", "format": "d"},
+          {"field": "era", "title": "Era"},
+          {"field": "ex", "type": "quantitative", "title": "Years", "format": ".1f"}
+        ]
+      }
+    }
+  ]
+}')
+    }
+
+    -- FIG 04 — the same three World years as FIG 02, on the same URL. They do
+    -- NOT share a request: both charts embed in the same tick and both fetches
+    -- are in flight before either response lands, so the HTTP cache has nothing
+    -- to serve the second one from. Two requests, 300 rows each, ~260 ms.
+    CONTAINER figSurvival (Class: 'owid-fig owid-live-5 blueprint') {
+      DYNAMICTEXT hSurvival (Content: 'Who is still alive', Class: 'owid-fig-title')
+      DYNAMICTEXT sSurvival (Content: 'Of 100 born in a World life table, the share reaching each age.  FIG 04', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartSurvival (
+        datasetName: '',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "/odata/live/LifeTable?$filter=location%20eq%20%27World%27%20and%20sex%20eq%20%27total%27%20and%20(year%20eq%201950%20or%20year%20eq%201990%20or%20year%20eq%202023)&$top=1000",
+    "format": {"type": "json", "property": "value"}
+  },
+  "width": "container",
+  "height": 330,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#ebebec",
+             "titleFont": "Barlow Condensed", "titleFontSize": 11,
+             "titleColor": "#6c6f72", "titleFontWeight": 400},
+    "legend": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+               "title": null, "symbolStrokeWidth": 2, "orient": "bottom", "direction": "horizontal"}
+  },
+  "transform": [
+    {"filter": "datum.lx != null"},
+    {"calculate": "datum.lx / 1000", "as": "pct"}
+  ],
+  "mark": {"type": "line", "strokeWidth": 1.8, "interpolate": "monotone"},
+  "encoding": {
+    "x": {"field": "age", "type": "quantitative", "scale": {"nice": false, "domain": [0, 100]},
+          "axis": {"tickCount": 6, "grid": true, "title": "Age"}},
+    "y": {"field": "pct", "type": "quantitative", "scale": {"domain": [0, 100], "nice": false},
+          "axis": {"tickCount": 5, "grid": true, "title": "% still alive"}},
+    "color": {"field": "year", "type": "nominal",
+              "scale": {"domain": [1950, 1990, 2023], "range": ["#a9a9ad", "#749dc4", "#1d2d3d"]}},
+    "tooltip": [
+      {"field": "year", "type": "nominal", "title": "Year"},
+      {"field": "age", "type": "quantitative", "title": "Age"},
+      {"field": "pct", "type": "quantitative", "title": "% alive", "format": ".1f"}
+    ]
+  }
+}')
+    }
+
+    -- FIG 05 — one request returns both sexes; the subtraction happens in the
+    -- browser, because a pivot is cheaper to ship than a second round trip.
+    CONTAINER figGap (Class: 'owid-fig owid-live-6 blueprint') {
+      DYNAMICTEXT hGap (Content: 'How much longer women live', Class: 'owid-fig-title')
+      DYNAMICTEXT sGap (Content: 'Female life expectancy at birth minus male, in years. Russia peaks at 13.8 in 1994.  FIG 05', Class: 'owid-fig-sub')
+      pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' chartGap (
+        datasetName: '',
+        chartHeight: 0,
+        renderer: 'svg',
+        showActions: false,
+        spec: '{
+  "$schema": "https://vega.github.io/schema/vega-lite/v6.json",
+  "data": {
+    "url": "/odata/live/LifeExpectancy?$filter=era%20eq%20%27observed%27%20and%20(sex%20eq%20%27male%27%20or%20sex%20eq%20%27female%27)%20and%20(location%20eq%20%27World%27%20or%20location%20eq%20%27Russia%27%20or%20location%20eq%20%27Japan%27%20or%20location%20eq%20%27United%20States%27%20or%20location%20eq%20%27Nigeria%27)&$orderby=location,year&$top=5000",
+    "format": {"type": "json", "property": "value"}
+  },
+  "width": "container",
+  "height": 300,
+  "background": null,
+  "config": {
+    "font": "Barlow",
+    "view": {"stroke": "transparent"},
+    "axis": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+             "domainColor": "#dededf", "tickColor": "#dededf", "gridColor": "#ebebec",
+             "titleFont": "Barlow Condensed", "titleFontSize": 11,
+             "titleColor": "#6c6f72", "titleFontWeight": 400},
+    "legend": {"labelFont": "Barlow", "labelFontSize": 10, "labelColor": "#6c6f72",
+               "title": null, "symbolStrokeWidth": 2, "orient": "bottom", "direction": "horizontal"}
+  },
+  "transform": [
+    {"pivot": "sex", "value": "ex", "groupby": ["location", "year"]},
+    {"filter": "datum.female != null && datum.male != null"},
+    {"calculate": "datum.female - datum.male", "as": "gap"}
+  ],
+  "mark": {"type": "line", "strokeWidth": 1.5},
+  "encoding": {
+    "x": {"field": "year", "type": "quantitative", "scale": {"nice": false, "domain": [1950, 2023]},
+          "axis": {"format": "d", "tickCount": 7, "grid": true, "title": null}},
+    "y": {"field": "gap", "type": "quantitative", "scale": {"zero": true, "nice": false},
+          "axis": {"tickCount": 6, "grid": true, "title": "Years"}},
+    "color": {"field": "location", "type": "nominal",
+              "scale": {"domain": ["Russia","Japan","United States","World","Nigeria"],
+                        "range": ["#b8712f","#1d2d3d","#597ea3","#a9a9ad","#94bce3"]}},
+    "tooltip": [
+      {"field": "location", "title": "Place"},
+      {"field": "year", "type": "quantitative", "title": "Year", "format": "d"},
+      {"field": "gap", "type": "quantitative", "title": "Gap, years", "format": ".2f"}
+    ]
+  }
+}')
+    }
+
+    -- TAB 01 — the one element on this page Mendix reads itself. Same
+    -- connection, same parquet, no HTTP: the connector is not an OData
+    -- implementation detail, it is the data access layer.
+    CONTAINER figRank (Class: 'owid-fig owid-live-6 blueprint') {
+      DYNAMICTEXT hRank (Content: 'Every country, ranked, 2023', Class: 'owid-fig-title')
+      DYNAMICTEXT sRank (Content: 'Read straight through the External Database Connector into this grid — no OData, no browser fetch. Aggregates excluded.  TAB 01', Class: 'owid-fig-sub')
+      DATAGRID gridRank (DataSource: MICROFLOW Owid.DS_Ranking, Class: 'owid-table') {
+        COLUMN cPlace (Attribute: Location, Caption: 'Country')
+        COLUMN cEx (Attribute: Ex, Caption: 'Life expectancy at birth')
+        COLUMN cYear (Attribute: Year, Caption: 'Year')
+      }
+    }
+
+    FOOTER pageFooter {
+      DYNAMICTEXT footNote (Content: 'UN WPP 2024 life tables via Our World in Data · queried per request by DuckDB over remote parquet · published at /odata/live/', Class: 'owid-foot')
+    }
+  }
+}
+;

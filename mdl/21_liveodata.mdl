@@ -1,0 +1,100 @@
+-- Stage 21: the live service.
+--
+-- Three resources, none of which has a table. Each is a non-persistable entity
+-- with ReadMode: microflow, so a GET here is a DuckDB query against 483 MB of
+-- parquet that this app never downloads, and the answer is discarded when the
+-- request ends.
+--
+--
+-- THE THREE DECLARATIONS THAT HAVE TO BE TRUE
+--
+-- Mendix applies no query options to a read-microflow resource, so every
+-- option in the contract below is a claim about the MICROFLOW, not something
+-- the platform provides. Getting one wrong is not a build error, it is a 200
+-- with the wrong rows.
+--
+--   Countable: No -- the microflow does not count. $count would need a second
+--     query over the same parquet to answer honestly, and no figure on the
+--     page asks. Declaring No also drops the $Response parameter requirement,
+--     which is why these microflows take $Request alone.
+--
+--   TopSupported / SkipSupported -- left at Yes because DS_* really do parse
+--     $top and $skip and put LIMIT/OFFSET in the statement. If they stopped,
+--     these would have to become No the same day.
+--
+--   KEY -- a declared key is a promise that a lookup by it is answered. A
+--     client holding one row re-reads it as ?$filter=rowKey eq '...' entirely
+--     on its own; if that came back as the collection the client would adopt
+--     the first row as that object's identity and keep it. rowKey is
+--     location|year|sex|age and its equivalents, built in SQL, so the promise
+--     is one the statement can keep.
+--
+-- No authentication: app security is off, so the feeds are anonymous and the
+-- browser can fetch them straight from a Vega spec.
+
+CREATE OR MODIFY ODATA SERVICE Owid.LiveApi (
+  path: 'odata/live/',
+  version: '1.0.0',
+  ODataVersion: OData4,
+  namespace: 'Owid.Live',
+  ServiceName: 'LiveApi',
+  PublishAssociations: Yes
+)
+{
+  -- 12.0M rows behind it, and no paging: CE7230 refuses UsePaging on a
+  -- resource with a read microflow, which is correct -- the platform cannot
+  -- page an answer it did not build. The cap is MaxTop inside DS_LifeTable and
+  -- the $top each figure asks for. Vega would not have followed
+  -- @odata.nextLink anyway.
+  publish entity Owid.LtRow as 'LifeTable' (
+    ReadMode: microflow Owid.DS_LifeTable,
+    InsertMode: not_supported,
+    UpdateMode: not_supported,
+    DeleteMode: not_supported,
+    UsePaging: No,
+    Countable: No
+  )
+  expose (
+    RowKey   as 'rowKey'   (KEY, Filterable),
+    Location as 'location' (Filterable, Sortable),
+    Year     as 'year'     (Filterable, Sortable),
+    Age      as 'age'      (Filterable, Sortable),
+    Sex      as 'sex'      (Filterable, Sortable),
+    Mx       as 'mx'       (Sortable),
+    Qx       as 'qx'       (Sortable),
+    Lx       as 'lx'       (Sortable),
+    Ex       as 'ex'       (Filterable, Sortable)
+  );
+
+  publish entity Owid.LeRow as 'LifeExpectancy' (
+    ReadMode: microflow Owid.DS_LifeExpectancy,
+    InsertMode: not_supported,
+    UpdateMode: not_supported,
+    DeleteMode: not_supported,
+    UsePaging: No,
+    Countable: No
+  )
+  expose (
+    RowKey   as 'rowKey'   (KEY, Filterable),
+    Location as 'location' (Filterable, Sortable),
+    Year     as 'year'     (Filterable, Sortable),
+    Sex      as 'sex'      (Filterable, Sortable),
+    Kind     as 'kind'     (Filterable, Sortable),
+    Era      as 'era'      (Filterable, Sortable),
+    Ex       as 'ex'       (Filterable, Sortable)
+  );
+
+  publish entity Owid.PlaceRow as 'Places' (
+    ReadMode: microflow Owid.DS_Places,
+    InsertMode: not_supported,
+    UpdateMode: not_supported,
+    DeleteMode: not_supported,
+    UsePaging: No,
+    Countable: No
+  )
+  expose (
+    Place as 'place' (KEY, Filterable, Sortable),
+    Iso3  as 'iso3'  (Filterable),
+    Kind  as 'kind'  (Filterable, Sortable)
+  );
+};
