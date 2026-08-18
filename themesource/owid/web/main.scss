@@ -376,3 +376,188 @@
   font-family: var(--font-heading);
   font-size: 15px;
 }
+
+/* ======================================================================== */
+/* Page two: the live board.                                                */
+/*                                                                          */
+/* Same design language, different grid. Page one is three columns sized for */
+/* one wide figure and two narrow ones; this board has six figures of        */
+/* genuinely different widths, so it runs on twelve and each figure declares */
+/* its own span.                                                             */
+/* ======================================================================== */
+
+.owid-live > .mx-dataview-content {
+  grid-template-columns: repeat(12, 1fr);
+}
+
+.owid-live-4 { grid-column: span 4; }
+.owid-live-5 { grid-column: span 5; }
+.owid-live-6 { grid-column: span 6; }
+.owid-live-7 { grid-column: span 7; }
+.owid-live-8 { grid-column: span 8; }
+
+/* The measured strip under the header. Four cells, hairline-separated, in the
+   same register as the figure captions: these are readings, not headlines. */
+.owid-live-strip {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 0;
+  border: 1px solid color-mix(in srgb, var(--owid-ink) 22%, transparent);
+  background: transparent;
+}
+
+.owid-stat {
+  padding: 13.6px 17px;
+  border-left: 1px solid color-mix(in srgb, var(--owid-ink) 22%, transparent);
+  min-width: 0;
+}
+.owid-stat:first-child {
+  border-left: 0;
+}
+
+/* Adjacent dynamic texts are both spans and would run together on one line
+   (MDL-WIDGET15); block is what separates them. */
+.owid-stat-value {
+  display: block;
+  font-family: var(--font-heading);
+  font-size: 27px;
+  line-height: 1.05;
+  letter-spacing: -0.01em;
+  color: var(--owid-ink);
+}
+.owid-stat-value.owid-stat-small {
+  font-size: 15px;
+  padding-top: 8px;
+  padding-bottom: 4px;
+}
+.owid-stat-label {
+  display: block;
+  margin-top: 4px;
+  font-size: 10.5px;
+  line-height: 1.35;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: color-mix(in srgb, var(--owid-ink) 52%, transparent);
+}
+
+/* Vega renders its own bound inputs into .vega-bindings. Left alone they are
+   browser-default form controls sitting under a hairline technical drawing,
+   which is exactly where the illusion breaks — so they get the same square
+   corners, condensed type and rule colour as everything else. */
+.owid-live .vega-bindings {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px;
+  margin: 2px 0 10px;
+  font-family: var(--font-body);
+  font-size: 11px;
+  color: color-mix(in srgb, var(--owid-ink) 58%, transparent);
+}
+.owid-live .vega-bind {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.owid-live .vega-bind-name {
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-size: 10px;
+}
+.owid-live .vega-bindings select {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, var(--owid-ink) 22%, transparent);
+  border-radius: 0;
+  background: transparent;
+  color: var(--owid-ink);
+  font-family: var(--font-heading);
+  font-size: 15px;
+  line-height: 1.1;
+  padding: 5px 26px 5px 9px;
+  /* The chevron is drawn rather than fetched: the app has no CDN. */
+  background-image:
+    linear-gradient(45deg, transparent 50%, currentColor 50%),
+    linear-gradient(135deg, currentColor 50%, transparent 50%);
+  background-position:
+    calc(100% - 14px) calc(50% + 1px),
+    calc(100% - 9px) calc(50% + 1px);
+  background-size: 5px 5px, 5px 5px;
+  background-repeat: no-repeat;
+}
+.owid-live .vega-bindings select:focus-visible {
+  outline: 2px solid var(--owid-accent);
+  outline-offset: 1px;
+}
+
+/* This board's grid is denser than page one's, so it collapses earlier. */
+@media (max-width: 1400px) {
+  .owid-live-4, .owid-live-5, .owid-live-7, .owid-live-8 { grid-column: span 6; }
+}
+@media (max-width: 1000px) {
+  .owid-live > .mx-dataview-content { grid-template-columns: 1fr; }
+  .owid-live-4, .owid-live-5, .owid-live-6,
+  .owid-live-7, .owid-live-8 { grid-column: 1 / -1; }
+  .owid-live-strip { grid-template-columns: repeat(2, 1fr); }
+  .owid-stat:nth-child(3) { border-left: 0; }
+}
+
+/* ======================================================================== */
+/* The layout chrome.                                                       */
+/*                                                                          */
+/* With two pages the navigation rail finally has something in it, and Atlas */
+/* renders it collapsed to 48px — wide enough for the icons this menu does   */
+/* not have, so both labels were clipped to "Develop" and "Mortalit". Widen  */
+/* it to fit the words and put it in the palette the boards are drawn in.    */
+/* ======================================================================== */
+
+.region-topbar,
+.region-sidebar {
+  background: var(--owid-accent-900);
+}
+
+.region-sidebar {
+  width: 216px;
+  min-width: 216px;
+  border-right: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
+}
+
+.region-sidebar .mx-navigationtree {
+  padding-top: 6px;
+}
+
+.region-sidebar .mx-navigationtree a {
+  display: flex;
+  align-items: center;
+  height: auto;
+  min-height: 0;
+  padding: 11px 17px;
+  font-family: var(--font-heading);
+  font-size: 15px;
+  letter-spacing: 0.01em;
+  color: color-mix(in srgb, #ffffff 72%, transparent);
+  white-space: normal;
+  border-left: 2px solid transparent;
+}
+
+.region-sidebar .mx-navigationtree a:hover,
+.region-sidebar .mx-navigationtree a:focus-visible {
+  background: color-mix(in srgb, #ffffff 8%, transparent);
+  color: #ffffff;
+  border-left-color: var(--owid-accent);
+}
+
+/* The brand bar carries the app name; the boards carry their own titles, so
+   it stays a hairline rather than a second header. */
+.region-topbar {
+  border-bottom: 1px solid color-mix(in srgb, #ffffff 12%, transparent);
+}
+
+/* Twenty rows of ranking are twice the height of the chart beside them, and a
+   grid row is as tall as its tallest cell — so the pair left half a screen of
+   nothing under FIG 05. Scrolling the grid in place costs one line and keeps
+   both boards on one screen. */
+.owid-live .owid-table {
+  max-height: 560px;
+  overflow-y: auto;
+}

@@ -1,7 +1,21 @@
-# OwidExplorer — "The Development Plate"
+# OwidExplorer
 
-A single-page data-visualization dashboard over **Our World in Data** development
-indicators, built as a Mendix app with [mxcli](https://github.com/ako/mxcli).
+Two data-visualization dashboards over **Our World in Data**, built as a Mendix
+app with [mxcli](https://github.com/ako/mxcli). They read the same public
+parquet catalogue through the same DuckDB, and they answer the question "where
+does the data live" in opposite ways — which is the point of having both.
+
+| | **The Development Plate** (`/`) | **The Mortality Surface** (`/p/live`) |
+| --- | --- | --- |
+| Data | copied into Mendix entities | none stored at all |
+| Path | refresh job → entities → OData → charts | charts → OData → DuckDB → parquet |
+| Rows | 13,760 held | 11.9 M reachable, 0 held |
+| Freshness | as of the last refresh | as of this request |
+| Cost | one 16 s job, then instant | 0.3–1.4 s per figure |
+
+---
+
+# Page one — "The Development Plate"
 
 ## What it is
 
@@ -87,16 +101,107 @@ theme with its tokens retuned to the Industry palette.
 
 Charts are Vega-Lite specifications, as in the mockup.
 
-## Running it
+The dashboard opens on **2022**, the last year Maddison publishes GDP for.
+Topic, region and year controls all apply on change — the Apply button that
+stood in for a broken `OnChange` is gone, fixed upstream (`FINDINGS.md` #26).
+
+---
+
+# Page two — "The Mortality Surface"
+
+## What it is
+
+The same design system over a dataset the app **never copies**. Five figures and
+a table over the UN World Population Prospects 2024 life tables as OWID
+publishes them: 261 places, single year of age by sex, estimates 1950–2023 and
+Medium-variant projections to 2100. 11.9 million rows and 483 MB of parquet, of
+which this app stores nothing.
+
+- **FIG 01** — the Lexis surface: death rate by age and year, 74 × 101 cells for
+  one place, on a log scale. Its country selector is a **Vega signal**, so
+  changing it rebuilds the data URL and the browser fetches a new surface.
+- **FIG 02** — the mortality bathtub, World, 1950 / 1990 / 2023.
+- **FIG 03** — life expectancy at birth 1950–2100, eight countries, observed
+  then projected.
+- **FIG 04** — survival curves: of 100 born, the share reaching each age.
+- **FIG 05** — the sex gap, female minus male. Russia peaks at 13.8 years in 1994.
+- **TAB 01** — every country ranked, 2023.
+
+## How it works
+
+Nothing is stored, and nothing is written on the way back:
+
+```
+browser  ──GET /odata/live/LifeTable?$filter=…&$top=…──▶  Mendix
+                                                          │
+                                          read microflow  │  Owid.DS_LifeTable
+                                          Owid.Parse ─────┤  $filter/$orderby/$top/$skip
+                                                          │  → SQL fragments
+                                External Database Connector  (BYOD, DuckDB)
+                                                          │
+                                    DuckDB httpfs ────────▶ catalog.ourworldindata.org
+                                                             (HTTP range requests)
+```
+
+Mendix applies **none** of the query options to a resource served by a read
+microflow — `$filter`, `$orderby`, `$top`, `$skip` and the key lookup all arrive
+on the URI and all stay there. Left alone that is a 200 with the wrong rows. The
+`mendix-odata-pushdown` skill pack does the translation, and this app is its
+splice-style caller: parse the URI once, concatenate the fragments onto a base
+statement held in a constant, run it through the connector with
+`EXECUTE DATABASE QUERY … DYNAMIC`.
+
+The three published resources are `LifeTable`, `LifeExpectancy` and `Places`,
+all non-persistable, all `Countable: No` and `UsePaging: No` — the caps live in
+the microflow, because the platform cannot page an answer it did not build.
+
+**TAB 01 goes the other way on purpose**: the same connection and the same
+parquet, read straight into a Mendix data grid with no HTTP and no OData. The
+service is a choice about who the consumer is, not a requirement of reading the
+data.
+
+## What it costs
+
+Measured on the running app. Cold is the first request after a restart; warm is
+any request after the connector's pooled DuckDB connection has the file's
+metadata and pages cached.
+
+| Request | Rows | Cold | Warm |
+| --- | --- | --- | --- |
+| `Places` (whole set) | 261 | 3.7 s | 0.46 s |
+| `LifeTable`, one country, all ages and years | 7,474 | 1.4 s | 0.72 s |
+| `LifeTable`, World, three years | 303 | — | 0.26 s |
+| `LifeExpectancy`, 8 countries, 1950–2100 | 1,208 | — | 1.25 s |
+
+The whole board is five parallel requests and about 1.5 s. The strip under the
+page header prints the milliseconds a probe query took **at that page load**,
+because "live" is a claim about latency and a page making the claim should show
+the number rather than assert it.
+
+## Trying the service by hand
+
+```bash
+curl "http://localhost:8080/odata/live/Places?\$top=3"
+curl "http://localhost:8080/odata/live/Places('Japan')"
+curl "http://localhost:8080/odata/live/LifeTable?\$filter=location%20eq%20%27Japan%27%20and%20year%20eq%202000%20and%20age%20le%202&\$orderby=age"
+```
+
+See `FINDINGS.md` #28–#35 for what was measured and the four traps: paging is
+refused on a read-microflow resource (#29), the pack's documented
+`IF Rejected` branch is unreachable (#30), the key from the path segment never
+reaches a splice caller (#31), and the UN scales three rate columns three
+different ways (#32).
+
+---
+
+# Running it
 
 ```bash
 ./mxcli run --local -p OwidExplorer.mpr     # http://localhost:8080/
 ```
 
-The dashboard opens on **2022**, the last year Maddison publishes GDP for. Topic
-and region changes are applied with the **Apply** button; the year box and the
-year arrows update immediately. (mxcli drops `OnChange` on combobox/checkbox —
-see `FINDINGS.md` #14.)
+`/` is the stored board, `/p/live` is the live one, and the navigation menu
+carries both.
 
 DuckDB is a **declared Java dependency** of the `Owid` module
 (`org.duckdb:duckdb_jdbc:1.4.1.0`), resolved into `vendorlib/` and committed, so
@@ -107,6 +212,16 @@ A fresh clone has no `mxcli` binary (it is git-ignored, ~88 MB). The SessionStar
 hook in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds
 mxcli from **ako/mxcli main** and then caches MxBuild, starts PostgreSQL and
 creates the database.
+
+The model is built by the MDL scripts in `mdl/`, applied in numeric order:
+`01`–`18` build the stored board, `19`–`24` the live one. The live pages also
+need the `mendix-odata-pushdown` skill pack, which ships the parser the read
+microflows delegate to:
+
+```bash
+./mxcli skill add mendix-odata-pushdown -p OwidExplorer.mpr --module Owid
+./mxcli exec .claude/skills/mendix-odata-pushdown/mdl/module.mdl -p OwidExplorer.mpr
+```
 
 - Mendix **11.13.0**
 - mxcli built from source, `ako/mxcli` main

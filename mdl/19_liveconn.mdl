@@ -1,0 +1,171 @@
+-- Stage 19: the live path — DuckDB queried per HTTP request, nothing stored.
+--
+-- Page 1 copies OWID into Mendix entities and publishes those. This is the
+-- other architecture: three non-persistable row types, three read microflows,
+-- and one OData service. No table, no refresh, no copy — a GET on
+-- /odata/live/ becomes a DuckDB query against remote parquet and the rows go
+-- straight back out as JSON.
+--
+-- The dataset is the UN World Population Prospects life tables (2024 revision)
+-- as OWID publishes them: 5,852,142 rows of estimates 1950-2023 plus 6,089,391
+-- rows of Medium-variant projections to 2100, at single year of age by sex for
+-- 261 places. 483 MB of parquet that this app never downloads.
+--
+--
+-- WHY EACH STORED QUERY IS A STUB
+--
+-- The statement that actually runs is built in the read microflow, because its
+-- WHERE and ORDER BY come from the client's $filter and $orderby and are only
+-- known per request. `EXECUTE DATABASE QUERY ... DYNAMIC $Sql` replaces the
+-- stored SQL wholesale, so the stored copy would be dead text that drifts.
+--
+-- What the stored query IS still needed for is the row shape: RETURNS/MAP is
+-- design-time metadata that tells Mendix which column becomes which attribute.
+-- So each one selects its columns from nothing -- `WHERE false` -- and declares
+-- the contract without pretending to be the query.
+--
+-- The real statements live in the three constants below, which is also the
+-- reason they are constants rather than string literals in the microflows:
+-- the parquet URL and the harmonisation are configuration, and an operator can
+-- repoint them at a local file or a mirror without a rebuild.
+
+-- The base statements. Single quotes are doubled per MDL string rules.
+--
+-- Every one is `SELECT * FROM ( ... ) t` so that the fragments the parser hands
+-- back can be concatenated onto the end: the whitelist maps exposed names onto
+-- `t.<col>`, and DuckDB pushes those predicates back down through the
+-- projection into the parquet scan, so `location eq ''Japan''` still prunes row
+-- groups rather than reading 239 MB and filtering afterwards.
+
+CREATE OR MODIFY CONSTANT Owid.LtSql
+  TYPE String
+  DEFAULT 'SELECT * FROM ( SELECT concat_ws(''|'', location, year, sex, age) AS row_key, location, year, CASE WHEN age = ''100+'' THEN 100 ELSE try_cast(age AS INTEGER) END AS age, sex, round(central_death_rate, 8) AS mx, round(probability_of_death, 8) AS qx, round(number_survivors, 3) AS lx, round(life_expectancy, 3) AS ex FROM read_parquet(''https://catalog.ourworldindata.org/garden/un/2024-12-02/un_wpp_lt/un_wpp_lt.parquet'') ) t'
+  COMMENT 'Life table rows, single year of age. The read microflow appends WHERE/ORDER BY/LIMIT built from the OData request.';
+
+-- Estimates and projections are two files with the same schema, so the era is
+-- a literal column rather than a computed one: the client can filter and the
+-- chart can style on it without knowing which file a row came from.
+CREATE OR MODIFY CONSTANT Owid.LeSql
+  TYPE String
+  DEFAULT 'SELECT * FROM ( SELECT concat_ws(''|'', location, year, sex) AS row_key, location, year, sex, loctypename AS kind, ''observed'' AS era, round(life_expectancy, 3) AS ex FROM read_parquet(''https://catalog.ourworldindata.org/garden/un/2024-12-02/un_wpp_lt/un_wpp_lt.parquet'') WHERE age = ''0'' UNION ALL SELECT concat_ws(''|'', location, year, sex), location, year, sex, loctypename, ''projected'', round(life_expectancy, 3) FROM read_parquet(''https://catalog.ourworldindata.org/garden/un/2024-12-02/un_wpp_lt/un_wpp_lt_proj.parquet'') WHERE age = ''0'' ) t'
+  COMMENT 'Life expectancy at birth, observed 1950-2023 and Medium-variant projections 2024-2100.';
+
+CREATE OR MODIFY CONSTANT Owid.PlaceSql
+  TYPE String
+  DEFAULT 'SELECT * FROM ( SELECT DISTINCT location AS place, iso3_code AS iso3, loctypename AS kind FROM read_parquet(''https://catalog.ourworldindata.org/garden/un/2024-12-02/un_wpp_lt/un_wpp_lt.parquet'') ) t'
+  COMMENT 'The 261 places the UN life tables cover: 237 countries, 23 aggregates and the World.';
+
+
+-- The row types.
+--
+-- Non-persistable, so there is no table and nothing to clean up: each one is
+-- instantiated by the connector, serialized to JSON, and dropped when the
+-- request ends.
+
+@Position(100, 700)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.LtRow (
+  /** location|year|sex|age -- the OData key, so a client can re-read one row. */
+  RowKey:   String(120),
+  Location: String(120),
+  Year:     Integer,
+  /** 0-100, with the UN''s open-ended "100+" bucket folded onto 100. */
+  Age:      Integer,
+  Sex:      String(10),
+  /**
+   * Central death rate m(x), per 1,000 person-years lived in the interval.
+   *
+   * The UN's three rate columns are each scaled differently and the file says
+   * so nowhere: m(x) is per 1,000, q(x) is a PERCENTAGE, and l(x) is out of a
+   * radix of 100,000. Read off Japan 2000: m=3.29, q=0.328, l(1)=99671.75 --
+   * 328.25 of 100,000 died in their first year, which is 0.328% and 3.29 per
+   * 1,000 person-years. Taking q(x) for a probability puts infant mortality at
+   * 33% and nothing complains.
+   */
+  Mx:       Decimal,
+  /** Probability of dying within the year, q(x), as a PERCENTAGE. */
+  Qx:       Decimal,
+  /** Survivors to exact age x out of a synthetic cohort of 100,000, l(x). */
+  Lx:       Decimal,
+  /** Remaining life expectancy at exact age x, e(x), in years. */
+  Ex:       Decimal
+);
+
+@Position(500, 700)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.LeRow (
+  RowKey:   String(120),
+  Location: String(120),
+  Year:     Integer,
+  Sex:      String(10),
+  /**
+   * Country/Area, Geographic region, Income group, Development group, World.
+   *
+   * Carried on the row rather than left to a join because a ranking that does
+   * not exclude the aggregates is wrong in a way that looks right: "World" and
+   * "High-income countries" sit in the middle of the table reading like
+   * countries.
+   */
+  Kind:     String(40),
+  /** 'observed' (1950-2023) or 'projected' (2024-2100, Medium variant). */
+  Era:      String(12),
+  Ex:       Decimal
+);
+
+@Position(900, 700)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.PlaceRow (
+  Place: String(120),
+  Iso3:  String(8),
+  /** Country/Area, Geographic region, Income group, Development group, World. */
+  Kind:  String(40)
+);
+
+
+-- The connection, re-declared whole.
+--
+-- CREATE OR MODIFY replaces the query set rather than merging into it, so
+-- LifeExpectancyByYear from stage 16 is repeated here; dropping it would delete
+-- the probe ACT_QueryViaConnector runs.
+
+CREATE OR MODIFY DATABASE CONNECTION Owid.OwidDuck
+  TYPE 'BYOD'
+  CONNECTION STRING @Owid.DuckDbUrl
+  USERNAME @Owid.DuckDbUser
+  PASSWORD @Owid.DuckDbPassword
+BEGIN
+  QUERY LifeExpectancyByYear
+    SQL $$SELECT country, year, sp_dyn_le00_in AS le
+          FROM read_parquet('https://catalog.ourworldindata.org/grapher/worldbank_wdi/2026-07-27/wdi/wdi.parquet')
+          WHERE year = 2020 AND sp_dyn_le00_in IS NOT NULL
+          LIMIT 25$$
+    RETURNS Owid.DuckRow
+    MAP (country AS Country, year AS Year, le AS Le);
+
+  -- Shape only. @Owid.LtSql plus the parsed WHERE/ORDER BY is what runs.
+  --
+  -- keyval survives the dynamic override: the statement the microflow builds
+  -- still binds it, which is how a single-row lookup gets its value across
+  -- without any of it being concatenated into SQL. Every place name the client
+  -- can ask for -- "Cote d'Ivoire" among them -- travels as a parameter.
+  QUERY LifeTable
+    SQL $$SELECT '' AS row_key, '' AS location, 0 AS year, 0 AS age, '' AS sex,
+                 0.0 AS mx, 0.0 AS qx, 0.0 AS lx, 0.0 AS ex
+          WHERE {keyval} <> {keyval}$$
+    PARAMETER keyval: String DEFAULT ''
+    RETURNS Owid.LtRow
+    MAP (row_key AS RowKey, location AS Location, year AS Year, age AS Age,
+         sex AS Sex, mx AS Mx, qx AS Qx, lx AS Lx, ex AS Ex);
+
+  QUERY LifeExpectancy
+    SQL $$SELECT '' AS row_key, '' AS location, 0 AS year, '' AS sex, '' AS kind,
+                 '' AS era, 0.0 AS ex
+          WHERE {keyval} <> {keyval}$$
+    PARAMETER keyval: String DEFAULT ''
+    RETURNS Owid.LeRow
+    MAP (row_key AS RowKey, location AS Location, year AS Year, sex AS Sex,
+         kind AS Kind, era AS Era, ex AS Ex);
+
+  QUERY Places
+    SQL $$SELECT '' AS place, '' AS iso3, '' AS kind WHERE {keyval} <> {keyval}$$
+    PARAMETER keyval: String DEFAULT ''
+    RETURNS Owid.PlaceRow
+    MAP (place AS Place, iso3 AS Iso3, kind AS Kind);
+END;

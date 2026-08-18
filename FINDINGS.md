@@ -698,3 +698,199 @@ a silent **clobber**, and stage 3 runs before stage 11.
 
 Idempotence is not free: `CREATE OR REPLACE` converts "this script is redundant"
 into "this script wins". The stub is deleted; stage 11 owns the document.
+
+---
+
+## 28. The live path works: OData → pushdown → connector → remote parquet
+
+Page two of this app (`Owid.LiveDashboard`, `/p/live`) holds **no data at all**.
+Three non-persistable entities, three read microflows, one published service at
+`/odata/live/`, and the browser fetches every figure itself. `mdl/19`–`24`.
+
+The dataset is the UN World Population Prospects 2024 life tables as OWID
+publishes them — 5,852,142 estimate rows plus 6,089,391 projection rows, 261
+places, single year of age by sex, 483 MB of parquet the app never downloads.
+
+### Measured, on the running app
+
+| Request | Rows | Cold | Warm |
+| --- | --- | --- | --- |
+| `Places` (whole set) | 261 | 3.7 s | 0.46 s |
+| `LifeTable?$filter=location eq 'Japan' and sex eq 'total'&$top=20000` | 7,474 | 1.4 s | 0.72 s |
+| `LifeTable` World, three years | 303 | — | 0.26 s |
+| `LifeExpectancy` 8 countries, estimates + projections | 1,208 | — | 1.25 s |
+| `LifeExpectancy` both sexes, 5 places | 740 | — | 0.50 s |
+
+**Cold-to-warm is the connector pooling the DuckDB connection.** `httpfs` caches
+the parquet footer and the pages it has already read *per connection*; because
+Mendix keeps the connection, the second request for the same file skips the
+metadata round trips. Nothing in the app arranges this — it falls out of the
+connector holding the handle.
+
+The whole board is five requests and lands in about 1.5 s wall clock, because
+they run in parallel.
+
+### The query options really do reach DuckDB
+
+Not "the widget shows five rows" — checked at the wire, per option:
+
+| | |
+| --- | --- |
+| `$top=3` | 3 rows, `LIMIT 3` in the statement |
+| `$skip=5` | starts at Angola, the 6th place |
+| `$filter` with `and`, `or`, parentheses, `ge`/`le` | translated whole |
+| `contains(place,'stan')` | 7 rows, `ILIKE` |
+| 32-term `or` | translated, one statement |
+| `$orderby=ex desc` | Monaco 86.372, San Marino 85.706, Hong Kong 85.511 |
+| `$orderby=location,year` | two terms |
+| `$select=place,iso3` | narrowed response |
+| `$count` | **404 non-countable** — the declared contract, honoured |
+| `$expand=foo` | 400 from Mendix, before the microflow |
+| unknown field in `$filter` | 400 from Mendix, before the microflow |
+| `year add 1 eq 2001` | **500** — see #30 |
+
+## 29. `UsePaging` is refused on a read-microflow resource (CE7230)
+
+`Cannot use paging in combination with a Read microflow.` Correct, and worth
+stating plainly: the platform cannot page an answer it did not build. The cap
+has to live in the microflow — `MaxTop` in `Parse`, and the `$top` each caller
+asks for. `PageSize` must be dropped from the published entity, not set to
+something large.
+
+The same applies to `Countable`. `Yes` (the default) obliges the read microflow
+to take `$Response: System.ODataResponse` and set `Count`, and answering that
+honestly means a second query over the same parquet. These resources declare
+`Countable: No`, which drops the `$Response` parameter requirement — `$Request`
+alone is still allowed and is what carries the query string. `/$count` then
+404s with `non-countable`, which is the truth rather than a wrong number.
+
+## 30. `RejectUnsupported = true` throws — the pattern's `IF Rejected` is dead
+
+`references/patterns.md` shows the splice caller doing:
+
+```
+IF $Q/Rejected THEN
+  -- fail the request; do not answer it with unfiltered rows
+END
+```
+
+That branch cannot run. `QueryObject.parse` checks `r.rejected && rejectUnsupported`
+and throws `IllegalArgumentException` **before** it instantiates the `Query`, so
+a microflow that receives a `Query` at all always has `Rejected = false`.
+
+Measured: `?$filter=year add 1 eq 2001` returns **500**, and the log carries
+`java.lang.IllegalArgumentException: cannot translate OData query: cannot
+translate: year add 1 eq 2001` from `owid.QueryObject.parse:45`. A three-line
+`Owid.Reject` Java action written to raise exactly that error never executed and
+has been deleted.
+
+`Rejected`/`RejectReason` are still worth having on the entity — they are what a
+**bind** caller (`RejectUnsupported = false`) reads to log a filter it was never
+going to apply. But a splice caller should not write the branch.
+
+## 31. `Parse` will not give a splice caller the key — by design, and it matters
+
+`ODataQueryParser.safeKey` accepts `[A-Za-z0-9_.\-]{1,128}` and nothing else,
+and `filterSql` is built from `$filter` alone. So the path-segment spelling of a
+key lookup reaches a splice caller as **nothing at all**:
+
+- `/Places('United States')` — space → rejected by `safeKey`
+- `/LifeTable('Japan|2000|total|0')` — `|` → rejected
+- one of the 237 countries is literally `Cote d'Ivoire`
+
+Before the fix, `/Places('Japan')` returned **Afghanistan** under a 200 — the
+collection's first row, wrapped as `$entity`. That is precisely the failure the
+pack exists to prevent, arriving through the pack.
+
+The guard is right: a value about to be concatenated into SQL has to be
+charset-checked. The way out is not a wider charset, it is **not concatenating**.
+`Owid.PathKey(Uri)` returns the segment with nothing removed (OData's doubled
+quote undoubled, percent-encoding decoded) and every statement carries
+
+```sql
+WHERE ({keyval} = '' OR t.row_key = {keyval})
+```
+
+with `keyval` bound. That is the `{keyFilter} = '' OR …` shape `patterns.md`
+already prescribes for **bind** callers, applied to a splice caller for the one
+value that must not be spliced. `dynamic` SQL still binds declared parameters,
+which is what makes it possible. Verified for all four spellings: `('Japan')`,
+`('United%20States')`, `('Cote%20d%27%27Ivoire')`, `('Japan%7C2000%7Ctotal%7C0')`.
+
+Note the `?$filter=rowKey eq '…'` spelling — the one a *Mendix* client emits
+when it re-reads a held row — was already correct, because it travels as a
+filter. Only the path form was broken, which is why it survives casual testing.
+
+## 32. The UN life table scales three rate columns three different ways
+
+Nothing in the file says so. Japan, 2000, age 0:
+
+| Column | Value | What it is |
+| --- | --- | --- |
+| `central_death_rate` | 3.29177 | per **1,000** person-years |
+| `probability_of_death` | 0.328251 | a **percentage** |
+| `number_survivors` | 100000 | radix of **100,000** |
+| `life_expectancy` | 81.179 | years |
+
+Check it against `l(1) = 99671.75`: 328.25 of 100,000 died in their first year,
+which is 0.328 % and 3.29 per 1,000 person-years. Reading `probability_of_death`
+as a probability puts Japanese infant mortality at 33 % and nothing complains.
+
+Also: `sex` is `'total'|'male'|'female'`, **lowercase**; the life-expectancy
+column is `life_expectancy`, not the demographer's `ex`. Both wrong values
+return zero rows silently.
+
+## 33. `width: "container"` is a Vega-Lite feature, not a Vega one
+
+A plain Vega spec with `"width": "container"` embeds at **0 × 420** — the canvas
+is there, the height is right, and nothing is drawn. Vega-Lite compiles
+`container` away into a `width` signal; the Vega runtime has no such concept, so
+the string reaches it as a width and yields zero.
+
+Do by hand what the compiler does:
+
+```json
+"autosize": {"type": "fit-x", "contains": "padding", "resize": true},
+"signals": [
+  {"name": "width",
+   "init": "isFinite(containerSize()[0]) ? containerSize()[0] : 640",
+   "on": [{"events": "window:resize",
+           "update": "isFinite(containerSize()[0]) ? containerSize()[0] : 640"}]}
+]
+```
+
+and drop the top-level `"width"`. vega-embed's autosize listener adds `.fit-x`
+to the container, which the stylesheet already widens to 100 %.
+
+## 34. A Vega signal in `data.url` is how a chart re-fetches for itself
+
+The widget's `spec` property is a static string, so the URL a chart fetches is
+fixed at design time — unless the spec is **Vega** rather than Vega-Lite, where
+`data.url` accepts `{"signal": …}` and a signal can be `bind`-ed to a select.
+Changing the select re-issues the request:
+
+```
+=== initial ===   200 … location eq 'Japan' and sex eq 'total'&$top=20000
+=== after Russia ===  200 … location eq 'Russia' and sex eq 'total'&$top=20000
+```
+
+One new request, no page state involved, no microflow in the loop. Vega-Lite
+cannot do this — `data.url` there is a literal — so FIG 01 is a Vega spec and
+the other four are Vega-Lite, dispatched by their own `$schema` in one widget.
+
+Two consequences worth planning for:
+
+- **Write the spec with no single quotes.** MDL doubles `'` inside string
+  literals, and a 60-line JSON spec is a bad place to lose a pair. Use `%27` for
+  OData's string delimiters and escaped double quotes inside Vega expressions.
+- **Style `.vega-bindings` yourself.** Vega renders bound inputs as browser
+  defaults, which sit under a hairline technical drawing looking exactly like
+  what they are.
+
+## 35. Identical URLs on one page are two requests, not one
+
+FIG 02 and FIG 04 fetch the same `/odata/live/LifeTable?…` URL. Both charts
+embed in the same tick, so both fetches are in flight before either response
+lands and the HTTP cache has nothing to serve the second one from. Two requests,
+300 rows each, ~260 ms — cheap here, and worth knowing before designing a board
+where it would not be.

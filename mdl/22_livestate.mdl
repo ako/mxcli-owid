@@ -1,0 +1,95 @@
+-- Stage 22: the two things on the live page that are NOT fetched by a chart.
+--
+-- Every figure on page 2 gets its data the same way a non-Mendix client would:
+-- the browser issues a GET against /odata/live/ and the read microflow turns it
+-- into DuckDB SQL. That is the architecture being demonstrated, and it means
+-- Mendix itself never sees the numbers.
+--
+-- These two go the other way, and they are here to make the contrast visible on
+-- the page rather than only in a diagram:
+--
+--   DS_LiveState  -- a probe run server-side at page load, so the header can
+--                    state what a live query actually cost this time rather
+--                    than claiming "live" and leaving it unmeasured.
+--   DS_Ranking    -- the table, read straight through the connector into a
+--                    Mendix data grid. Same connection, same parquet, no HTTP
+--                    and no OData: proof that publishing the resource is a
+--                    choice about who the consumer is, not a requirement of
+--                    reading the data.
+
+-- Wall clock, because the point is elapsed time and the model has no cheaper
+-- source of it. [%CurrentDateTime%] would do, but subtracting two DateTimes to
+-- get milliseconds is a longer way round than asking for the number.
+CREATE OR MODIFY JAVA ACTION Owid.NowMillis ()
+  RETURNS Long
+EXPOSED AS 'Milliseconds since the epoch' IN 'OData pushdown'
+AS $$
+return java.lang.Long.valueOf(System.currentTimeMillis());
+$$;
+
+@Position(1300, 700)
+CREATE OR MODIFY NON-PERSISTENT ENTITY Owid.LiveState (
+  /** Places the UN life tables cover, counted by asking, not by remembering. */
+  PlaceCount: Integer,
+  /** How long that count took, end to end, through the connector. */
+  QueryMs:    Long,
+  AsOf:       DateTime
+);
+
+-- The header probe.
+--
+-- It counts the places, which is the cheapest question the service can be
+-- asked and still a real one: DuckDB opens the remote parquet, reads the
+-- footer, scans one column and returns 261 rows. Cold that is about 1.7s;
+-- warm, once the connector's pooled connection has the file's metadata and
+-- pages cached, a fraction of it. Both numbers are worth showing, which is why
+-- the header prints the measurement rather than a claim.
+CREATE OR REPLACE MICROFLOW Owid.DS_LiveState ()
+  RETURNS Owid.LiveState AS $State
+BEGIN
+  @position(120, 200)
+  $T0 = CALL JAVA ACTION Owid.NowMillis ();
+
+  @position(280, 200)
+  declare $Sql String = @Owid.PlaceSql + ' WHERE {keyval} = '''' ORDER BY t.place';
+
+  @position(460, 200)
+  $Places = EXECUTE DATABASE QUERY Owid.OwidDuck.Places DYNAMIC $Sql (keyval = '');
+
+  @position(620, 200)
+  $N = COUNT($Places);
+
+  @position(780, 200)
+  $T1 = CALL JAVA ACTION Owid.NowMillis ();
+
+  @position(940, 200)
+  $State = CREATE Owid.LiveState (
+    PlaceCount = $N,
+    QueryMs    = $T1 - $T0,
+    AsOf       = [%CurrentDateTime%]
+  );
+
+  @position(1120, 200)
+  RETURN $State;
+END;
+
+-- The table: the longest- and shortest-lived places of 2023.
+--
+-- kind = 'Country/Area' is the whole reason Kind is carried on the row. Without
+-- it "High-income countries" (82.4) outranks every country but Japan and reads
+-- exactly like one.
+CREATE OR REPLACE MICROFLOW Owid.DS_Ranking ()
+  RETURNS List of Owid.LeRow AS $Rows
+BEGIN
+  @position(120, 200)
+  declare $Sql String = @Owid.LeSql
+    + ' WHERE {keyval} = '''' AND t.year = 2023 AND t.sex = ''total'''
+    + ' AND t.era = ''observed'' AND t.kind = ''Country/Area'''
+    + ' ORDER BY t.ex DESC';
+
+  @position(340, 200)
+  $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.LifeExpectancy DYNAMIC $Sql (keyval = '');
+
+  @position(520, 200)
+  RETURN $Rows;
+END;

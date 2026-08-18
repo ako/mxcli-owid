@@ -1,0 +1,186 @@
+-- Stage 20: the read microflows, and the one thing they must be able to do
+-- that MDL has no verb for.
+--
+-- Mendix publishes a non-persistable entity happily and then applies NONE of
+-- the query options to the answer. $filter, $orderby, $top, $skip and the key
+-- lookup all arrive on the URI and all stay there; whatever the microflow
+-- returns is what the client gets. That is not a 500 and not an empty grid --
+-- it is a 200 with the wrong rows, which no client can detect. The pushdown
+-- pack installed in stage 19a exists for exactly this, and these three
+-- microflows are its splice-style caller: parse the URI once, concatenate the
+-- fragments onto the base statement, run it.
+
+-- FAILING A REQUEST THE PARSER COULD NOT TRANSLATE -- and why there is no
+-- code here for it.
+--
+-- Splice callers pass RejectUnsupported = true because their entire WHERE is
+-- FilterSql: a filter that did not translate means no WHERE at all, which is
+-- 5.8 million rows returned under a 200 in answer to a request for a hundred.
+--
+-- The pack's own splice pattern shows the caller testing $Q/Rejected and
+-- failing the request itself. That branch is unreachable: with
+-- RejectUnsupported = true, QueryObject.parse throws IllegalArgumentException
+-- BEFORE it instantiates the Query, so a microflow that gets a Query back
+-- always has Rejected = false. Measured, not read -- ?$filter=year add 1 eq
+-- 2001 comes back 500 with "cannot translate: year add 1 eq 2001" in the log,
+-- and the three lines of Java written to raise that error never ran. They are
+-- gone; the pack already does it. (FINDINGS #30.)
+
+-- The key out of the path segment, which Parse deliberately will not give you.
+--
+-- Parse returns the key as a BIND value and guards it with a charset check --
+-- [A-Za-z0-9_.-] and nothing else -- because a value that is about to be
+-- concatenated into SQL has to be. That guard is right for its purpose and
+-- wrong for every key on this service: 'United States' has a space, a row key
+-- is 'Japan|2000|total|0', and one of the 237 countries is "Cote d'Ivoire".
+-- All three come back empty, so /LifeTable('Japan|2000|total|0') silently
+-- answers with the collection and the client adopts row one as that object.
+--
+-- The way out is not a wider charset, it is not concatenating: this returns the
+-- key with nothing removed, and the statement binds it as {keyval}. OData
+-- doubles an embedded quote inside the segment, so it is undoubled here, and
+-- the segment is percent-encoded, so it is decoded here.
+--
+-- Two spellings arrive: /Res('v') and /Res(k='v'). Both are the path form; the
+-- ?$filter=k eq 'v' form is already a filter and reaches FilterSql on its own.
+CREATE OR MODIFY JAVA ACTION Owid.PathKey (
+  Uri: String
+) RETURNS String
+EXPOSED AS 'OData key from the path segment' IN 'OData pushdown'
+AS $$
+if (Uri == null) {
+    return "";
+}
+int q = Uri.indexOf('?');
+String path = q < 0 ? Uri : Uri.substring(0, q);
+java.util.regex.Matcher m = java.util.regex.Pattern
+        .compile("\\(\\s*(?:[A-Za-z_][A-Za-z0-9_]*\\s*=\\s*)?'((?:[^']|'')*)'\\s*\\)\\s*$")
+        .matcher(path);
+if (!m.find()) {
+    return "";
+}
+String raw = m.group(1).replace("''", "'");
+return java.net.URLDecoder.decode(raw, java.nio.charset.StandardCharsets.UTF_8);
+$$;
+
+
+-- The life table: 12,000 rows per country, one per year per age per sex.
+--
+-- MaxTop is 20000 because one country's whole estimate surface -- 74 years x
+-- 101 ages -- is 7,474 rows and the mortality figure asks for it in a single
+-- request. DefaultTop is far smaller: an unfiltered GET is somebody exploring
+-- the service, not a chart, and it should return a page rather than a file.
+CREATE OR REPLACE MICROFLOW Owid.DS_LifeTable (
+  $Request: System.HttpRequest
+)
+RETURNS List of Owid.LtRow AS $Rows
+BEGIN
+  @position(120, 200)
+  $Q = CALL JAVA ACTION Owid.Parse (
+    Uri               = $Request/Uri,
+    Columns           = 'rowKey:t.row_key:text,location:t.location:text,year:t.year:number,age:t.age:number,sex:t.sex:text,mx:t.mx:number,qx:t.qx:number,lx:t.lx:number,ex:t.ex:number',
+    Dialect           = 'duckdb',
+    MaxTop            = 20000,
+    DefaultTop        = 500,
+    DefaultOrderBy    = 't.location, t.year, t.age',
+    KeyField          = 'rowKey',
+    RejectUnsupported = true
+  );
+
+
+  @position(560, 200)
+  $PathKey = CALL JAVA ACTION Owid.PathKey (Uri = $Request/Uri);
+
+  @position(720, 200)
+  declare $Sql String = @Owid.LtSql
+    + ' WHERE ({keyval} = '''' OR t.row_key = {keyval})'
+    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ')
+    + $Q/OrderBySql;
+
+  @position(880, 200)
+  $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.LifeTable DYNAMIC $Sql (keyval = $PathKey);
+
+  @position(1040, 200)
+  RETURN $Rows;
+END;
+
+
+-- Life expectancy at birth, estimates and projections in one set.
+--
+-- 261 places x 151 years x 3 sexes is 118,000 rows, so this one is capped
+-- lower: every figure on the page asks for a handful of places.
+CREATE OR REPLACE MICROFLOW Owid.DS_LifeExpectancy (
+  $Request: System.HttpRequest
+)
+RETURNS List of Owid.LeRow AS $Rows
+BEGIN
+  @position(120, 200)
+  $Q = CALL JAVA ACTION Owid.Parse (
+    Uri               = $Request/Uri,
+    Columns           = 'rowKey:t.row_key:text,location:t.location:text,year:t.year:number,sex:t.sex:text,kind:t.kind:text,era:t.era:text,ex:t.ex:number',
+    Dialect           = 'duckdb',
+    MaxTop            = 5000,
+    DefaultTop        = 500,
+    DefaultOrderBy    = 't.location, t.year',
+    KeyField          = 'rowKey',
+    RejectUnsupported = true
+  );
+
+
+  @position(560, 200)
+  $PathKey = CALL JAVA ACTION Owid.PathKey (Uri = $Request/Uri);
+
+  @position(720, 200)
+  declare $Sql String = @Owid.LeSql
+    + ' WHERE ({keyval} = '''' OR t.row_key = {keyval})'
+    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ')
+    + $Q/OrderBySql;
+
+  @position(880, 200)
+  $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.LifeExpectancy DYNAMIC $Sql (keyval = $PathKey);
+
+  @position(1040, 200)
+  RETURN $Rows;
+END;
+
+
+-- The place list. 261 rows, so it is the one resource a client may sensibly
+-- ask for whole -- DefaultTop covers it and MaxTop barely matters.
+--
+-- It also exercises the key path: /Places('Japan') and ?$filter=place eq
+-- 'Japan' are the two spellings a Mendix client re-reads a held row by, and
+-- both arrive here as $Q/FilterSql because Parse resolves them to the same
+-- thing.
+CREATE OR REPLACE MICROFLOW Owid.DS_Places (
+  $Request: System.HttpRequest
+)
+RETURNS List of Owid.PlaceRow AS $Rows
+BEGIN
+  @position(120, 200)
+  $Q = CALL JAVA ACTION Owid.Parse (
+    Uri               = $Request/Uri,
+    Columns           = 'place:t.place:text,iso3:t.iso3:text,kind:t.kind:text',
+    Dialect           = 'duckdb',
+    MaxTop            = 500,
+    DefaultTop        = 500,
+    DefaultOrderBy    = 't.kind, t.place',
+    KeyField          = 'place',
+    RejectUnsupported = true
+  );
+
+
+  @position(560, 200)
+  $PathKey = CALL JAVA ACTION Owid.PathKey (Uri = $Request/Uri);
+
+  @position(720, 200)
+  declare $Sql String = @Owid.PlaceSql
+    + ' WHERE ({keyval} = '''' OR t.place = {keyval})'
+    + replaceAll($Q/FilterSql, '^ WHERE ', ' AND ')
+    + $Q/OrderBySql;
+
+  @position(880, 200)
+  $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.Places DYNAMIC $Sql (keyval = $PathKey);
+
+  @position(1040, 200)
+  RETURN $Rows;
+END;
