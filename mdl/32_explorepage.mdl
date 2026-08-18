@@ -1,0 +1,184 @@
+-- Stage 32: board three.
+--
+-- Four regions, left to right and top to bottom:
+--
+--   Catalogue   1,138 tables, searchable. Selecting one reads its columns.
+--   Fields      that table's real columns, each with the four shelf buttons.
+--   Chart       the settings of whichever card is being edited.
+--   Canvas      every saved card, run live, in the order you put them in.
+--
+-- The canvas is the only part that costs anything: each card is a separate
+-- remote read, and they run when the page draws and after every change.
+
+CREATE OR REPLACE PAGE Owid.Explore
+(
+  Title:  'The Explorer',
+  Layout: Atlas_Core.Atlas_Default,
+  Url:    'explore'
+)
+{
+  DATAVIEW dvEx (DataSource: MICROFLOW Owid.DS_Explorer, Class: 'owid-page owid-explore') {
+
+    CONTAINER header (Class: 'owid-header') {
+      CONTAINER headerLeft (Class: 'owid-header-left') {
+        DYNAMICTEXT kicker (Content: 'Our World in Data · garden channel · built here, read there', Class: 'owid-kicker')
+        DYNAMICTEXT title (Content: 'The Explorer', Class: 'owid-title')
+      }
+      CONTAINER headerRight (Class: 'owid-header-right') {
+        DYNAMICTEXT scope (Content: '{1} tables indexed · {2} charts saved',
+          ContentParams: [{1} = DatasetCount, {2} = CardCount], Class: 'owid-meta')
+        DYNAMICTEXT msg (Content: '{1}', ContentParams: [{1} = Message], Class: 'owid-focus')
+      }
+    }
+
+    -- ---------------------------------------------------------- catalogue
+    CONTAINER browse (Class: 'owid-fig owid-ex-browse blueprint') {
+      DYNAMICTEXT hBrowse (Content: 'Catalogue', Class: 'owid-fig-title')
+      DYNAMICTEXT sBrowse (Content: 'Start with the verified set. OWID''s published index is a 2023 snapshot whose files have mostly been removed, so pulling it gives breadth and few working links — Verify walks it and writes down which still answer.', Class: 'owid-fig-sub')
+      CONTAINER browseBar (Class: 'owid-ex-bar') {
+        TEXTBOX tbSearch (Label: 'Search', Attribute: Search,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $currentObject),
+          Class: 'owid-ex-search')
+        CHECKBOX cbWorking (Label: 'Only tables confirmed to work', Attribute: OnlyWorking,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $currentObject))
+      }
+      CONTAINER browseBar2 (Class: 'owid-ex-bar') {
+        ACTIONBUTTON btnSeed (Caption: 'Load the verified set',
+          Action: MICROFLOW Owid.ACT_SeedDatasets, ButtonStyle: Primary)
+        ACTIONBUTTON btnCat (Caption: 'Pull the index',
+          Action: MICROFLOW Owid.ACT_RefreshCatalog, ButtonStyle: Default)
+        ACTIONBUTTON btnVerify (Caption: 'Verify 25 more',
+          Action: MICROFLOW Owid.ACT_VerifyBatch, ButtonStyle: Default)
+      }
+      LISTVIEW lvSets (DataSource: MICROFLOW Owid.DS_Datasets(Explorer: $currentObject),
+                       Class: 'owid-ex-sets') {
+        CONTAINER setRow (Class: 'owid-ex-set') {
+          DYNAMICTEXT setName (Content: '{1}', ContentParams: [{1} = TableName], Class: 'owid-ex-setname')
+          DYNAMICTEXT setMeta (Content: '{1} · {2}',
+            ContentParams: [{1} = Namespace, {2} = Version], Class: 'owid-ex-setmeta')
+          ACTIONBUTTON btnOpen (Caption: 'Open',
+            Action: MICROFLOW Owid.ACT_SelectDataset(Explorer: $dvEx, Dataset: $currentObject),
+            ButtonStyle: Default, Class: 'owid-ex-open')
+        }
+      }
+    }
+
+    -- ------------------------------------------------------------- fields
+    CONTAINER shelf (Class: 'owid-fig owid-ex-shelf blueprint') {
+      DYNAMICTEXT hShelf (Content: 'Fields', Class: 'owid-fig-title')
+      DYNAMICTEXT sShelf (Content: 'The columns this table really has, read from the file. Put one on an axis with the buttons.', Class: 'owid-fig-sub')
+      DATAVIEW dvSel (DataSource: $currentObject/Owid.Explorer_Dataset, Class: 'owid-ex-selhead') {
+        DYNAMICTEXT selName (Content: '{1}', ContentParams: [{1} = TableName], Class: 'owid-ex-setname')
+        DYNAMICTEXT selPath (Content: '{1}', ContentParams: [{1} = Path], Class: 'owid-ex-path')
+        DYNAMICTEXT selNote (Content: '{1}', ContentParams: [{1} = ProbeNote], Class: 'owid-ex-note')
+        CONTAINER selBar (Class: 'owid-ex-bar') {
+          ACTIONBUTTON btnChart (Caption: 'Chart it',
+            Action: MICROFLOW Owid.ACT_NewCard(Explorer: $dvEx), ButtonStyle: Primary)
+          ACTIONBUTTON btnReprobe (Caption: 'Re-read columns',
+            Action: MICROFLOW Owid.ACT_ReprobeDataset(Explorer: $dvEx), ButtonStyle: Default)
+        }
+      }
+      LISTVIEW lvFields (DataSource: MICROFLOW Owid.DS_SelectedFields(Explorer: $currentObject),
+                         Class: 'owid-ex-fields') {
+        CONTAINER fieldRow (Class: 'owid-ex-field') {
+          DYNAMICTEXT fName (Content: '{1}', ContentParams: [{1} = Name], Class: 'owid-ex-fname')
+          DYNAMICTEXT fType (Content: '{1}', ContentParams: [{1} = SqlType], Class: 'owid-ex-ftype')
+          CONTAINER fButtons (Class: 'owid-ex-fbtns') {
+            ACTIONBUTTON bX (Caption: 'x',
+              Action: MICROFLOW Owid.ACT_ShelfX(Explorer: $dvEx, Field: $currentObject),
+              ButtonStyle: Default)
+            ACTIONBUTTON bY (Caption: 'value',
+              Action: MICROFLOW Owid.ACT_ShelfY(Explorer: $dvEx, Field: $currentObject),
+              ButtonStyle: Default)
+            ACTIONBUTTON bS (Caption: 'split',
+              Action: MICROFLOW Owid.ACT_ShelfSeries(Explorer: $dvEx, Field: $currentObject),
+              ButtonStyle: Default)
+            ACTIONBUTTON bF (Caption: 'filter',
+              Action: MICROFLOW Owid.ACT_ShelfFilter(Explorer: $dvEx, Field: $currentObject),
+              ButtonStyle: Default)
+          }
+        }
+      }
+    }
+
+    -- -------------------------------------------------------------- chart
+    CONTAINER settings (Class: 'owid-fig owid-ex-settings blueprint') {
+      DYNAMICTEXT hSet (Content: 'Chart', Class: 'owid-fig-title')
+      DYNAMICTEXT sSet (Content: 'What the selected card draws. Everything here applies as you change it.', Class: 'owid-fig-sub')
+      DATAVIEW dvCard (DataSource: $currentObject/Owid.Explorer_Card, Class: 'owid-ex-card') {
+        TEXTBOX tbTitle (Label: 'Title', Attribute: Title,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $dvEx))
+        COMBOBOX cbType (Label: 'Chart', Attribute: ChartType,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $dvEx))
+        COMBOBOX cbAgg (Label: 'Aggregate', Attribute: Agg,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $dvEx))
+        DATAVIEW dvX (DataSource: $currentObject/Owid.Card_X, Class: 'owid-ex-slot') {
+          DYNAMICTEXT xLbl (Content: 'x  {1}', ContentParams: [{1} = Name], Class: 'owid-ex-slotval')
+        }
+        DATAVIEW dvY (DataSource: $currentObject/Owid.Card_Y, Class: 'owid-ex-slot') {
+          DYNAMICTEXT yLbl (Content: 'value  {1}', ContentParams: [{1} = Name], Class: 'owid-ex-slotval')
+        }
+        DATAVIEW dvS (DataSource: $currentObject/Owid.Card_Series, Class: 'owid-ex-slot') {
+          DYNAMICTEXT sLbl (Content: 'split  {1}', ContentParams: [{1} = Name], Class: 'owid-ex-slotval')
+        }
+        DATAVIEW dvF (DataSource: $currentObject/Owid.Card_Filter, Class: 'owid-ex-slot') {
+          DYNAMICTEXT fLbl (Content: 'filter  {1}', ContentParams: [{1} = Name], Class: 'owid-ex-slotval')
+        }
+        TEXTBOX tbFilter (Label: 'Filter is', Attribute: FilterValue,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $dvEx))
+        TEXTBOX tbLimit (Label: 'Row cap', Attribute: RowLimit,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $dvEx))
+        CHECKBOX cbWide (Label: 'Full width', Attribute: Wide,
+          OnChange: MICROFLOW Owid.ACT_ApplyCard(Explorer: $dvEx))
+        CONTAINER setBar (Class: 'owid-ex-bar') {
+          ACTIONBUTTON btnClearS (Caption: 'Clear split',
+            Action: MICROFLOW Owid.ACT_ClearSeries(Explorer: $dvEx), ButtonStyle: Default)
+          ACTIONBUTTON btnClearF (Caption: 'Clear filter',
+            Action: MICROFLOW Owid.ACT_ClearFilter(Explorer: $dvEx), ButtonStyle: Default)
+        }
+      }
+    }
+
+    -- ------------------------------------------------------------- canvas
+    CONTAINER canvas (Class: 'owid-ex-canvas') {
+      LISTVIEW lvCards (DataSource: MICROFLOW Owid.DS_Canvas(Explorer: $currentObject),
+                        Class: 'owid-ex-cards') {
+        CONTAINER card (Class: 'owid-fig owid-ex-cardbox blueprint') {
+          DYNAMICTEXT cTitle (Content: '{1}', ContentParams: [{1} = Title], Class: 'owid-fig-title')
+          DYNAMICTEXT cSub (Content: '{1}', ContentParams: [{1} = Subtitle], Class: 'owid-fig-sub')
+          DYNAMICTEXT cNote (Content: '{1}', ContentParams: [{1} = Note], Class: 'owid-ex-cardnote')
+          pluggablewidget 'owidexplorer.widget.web.vegachart.VegaChart' cChart (
+            specSource: SpecJson,
+            chartData: DataJson,
+            datasetName: 'table',
+            chartHeight: 0,
+            renderer: 'svg',
+            showActions: false)
+          CONTAINER cBar (Class: 'owid-ex-cardbar') {
+            DYNAMICTEXT cStat (Content: '{1} rows · {2} ms',
+              ContentParams: [{1} = Rows, {2} = Ms], Class: 'owid-ex-cardstat')
+            DATAVIEW dvCardRef (DataSource: $currentObject/Owid.CardView_Card, Class: 'owid-ex-cardacts') {
+              ACTIONBUTTON bEdit (Caption: 'Edit',
+                Action: MICROFLOW Owid.ACT_EditCard(Explorer: $dvEx, Card: $currentObject),
+                ButtonStyle: Default)
+              ACTIONBUTTON bUp (Caption: '↑',
+                Action: MICROFLOW Owid.ACT_CardUp(Explorer: $dvEx, Card: $currentObject),
+                ButtonStyle: Default)
+              ACTIONBUTTON bDown (Caption: '↓',
+                Action: MICROFLOW Owid.ACT_CardDown(Explorer: $dvEx, Card: $currentObject),
+                ButtonStyle: Default)
+              ACTIONBUTTON bDel (Caption: 'Remove',
+                Action: MICROFLOW Owid.ACT_DeleteCard(Explorer: $dvEx, Card: $currentObject),
+                ButtonStyle: Default)
+            }
+          }
+        }
+      }
+    }
+
+    FOOTER pageFooter {
+      DYNAMICTEXT footNote (Content: 'Catalogue and card definitions are stored · every number on every chart is read from remote parquet when the page draws', Class: 'owid-foot')
+    }
+  }
+}
+;

@@ -1,0 +1,134 @@
+-- Stage 33: making the browser usable against a catalogue that is not.
+--
+-- OWID publishes its index in two formats and only one of them is current:
+--
+--   catalog-garden.parquet   Last-Modified 22 Mar 2023. DuckDB reads it in
+--                            half a second, and 23 of 24 sampled paths 404 --
+--                            the versions it names were superseded and removed
+--                            years ago. Rewriting the version to 'latest' does
+--                            not rescue them either: 0 of 24.
+--   catalog-garden.feather   Last-Modified today, 3.4 MB, and carries title and
+--                            description the parquet lacks. DuckDB cannot read
+--                            it: the community nanoarrow extension loads, but
+--                            the file's LZ4 block compression is not in that
+--                            build ("Compression type with value 1 not
+--                            supported"). There is no bucket listing and no
+--                            JSON index to fall back to. (FINDINGS #39.)
+--
+-- So the index gives breadth and almost no working links, while the files
+-- themselves are fine -- board two reads un_wpp_lt, which the 2023 index does
+-- not even list. Two mechanisms bridge that:
+--
+--   SEED     a short list of paths verified by hand, so the explorer opens on
+--            something real rather than a graveyard.
+--   VERIFY   a batch probe that walks the indexed rows and writes down which
+--            ones answer, so the browser's "only working" filter becomes true
+--            over time instead of being a guess.
+
+CREATE OR REPLACE MICROFLOW Owid.SUB_SeedDataset (
+  $Path: String, $Namespace: String, $Version: String,
+  $DatasetName: String, $TableName: String
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Existing FROM Owid.Dataset WHERE Path = $Path LIMIT 1;
+
+  @position(340, 200)
+  IF $Existing != empty THEN
+    @position(380, 320)
+    CALL MICROFLOW Owid.ACT_ProbeDataset (Dataset = $Existing);
+    @position(700, 320)
+    RETURN;
+  END IF;
+
+  @position(620, 200)
+  $New = CREATE Owid.Dataset (
+    Path = $Path, Namespace = $Namespace, Version = $Version,
+    DatasetName = $DatasetName, TableName = $TableName, Dims = 2
+  ) COMMIT;
+
+  @position(880, 200)
+  CALL MICROFLOW Owid.ACT_ProbeDataset (Dataset = $New);
+END;
+
+
+-- Eleven tables, each checked by hand at the time of writing. They are the
+-- sources the other two boards already read plus a few neighbours, which is
+-- the point: these are known to exist because something in this app is reading
+-- them right now.
+CREATE OR REPLACE MICROFLOW Owid.ACT_SeedDatasetsNow ()
+BEGIN
+  @position(120, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/un/2024-12-02/un_wpp_lt/un_wpp_lt',
+    Namespace = 'un', Version = '2024-12-02', DatasetName = 'un_wpp_lt', TableName = 'un_wpp_lt');
+  @position(320, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/un/2024-12-02/un_wpp_lt/un_wpp_lt_proj',
+    Namespace = 'un', Version = '2024-12-02', DatasetName = 'un_wpp_lt', TableName = 'un_wpp_lt_proj');
+  @position(520, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'grapher/worldbank_wdi/2026-07-27/wdi/wdi',
+    Namespace = 'worldbank_wdi', Version = '2026-07-27', DatasetName = 'wdi', TableName = 'wdi');
+  @position(720, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/ggdc/2024-04-26/maddison_project_database/maddison_project_database',
+    Namespace = 'ggdc', Version = '2024-04-26', DatasetName = 'maddison_project_database', TableName = 'maddison_project_database');
+  @position(920, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/energy/2026-05-05/primary_energy_consumption/primary_energy_consumption',
+    Namespace = 'energy', Version = '2026-05-05', DatasetName = 'primary_energy_consumption', TableName = 'primary_energy_consumption');
+  @position(1120, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/faostat/2026-05-22/additional_variables/food_available_for_consumption',
+    Namespace = 'faostat', Version = '2026-05-22', DatasetName = 'additional_variables', TableName = 'food_available_for_consumption');
+  @position(1320, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/education/2023-07-17/education_barro_lee_projections/education_barro_lee_projections',
+    Namespace = 'education', Version = '2023-07-17', DatasetName = 'education_barro_lee_projections', TableName = 'education_barro_lee_projections');
+  @position(1520, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/owid/latest/key_indicators/land_area',
+    Namespace = 'owid', Version = 'latest', DatasetName = 'key_indicators', TableName = 'land_area');
+  @position(1720, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/excess_mortality/latest/wmd/wmd',
+    Namespace = 'excess_mortality', Version = 'latest', DatasetName = 'wmd', TableName = 'wmd');
+  @position(1920, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/regions/2023-01-01/regions/regions',
+    Namespace = 'regions', Version = '2023-01-01', DatasetName = 'regions', TableName = 'regions');
+  @position(2120, 200)
+  CALL MICROFLOW Owid.SUB_SeedDataset (Path = 'garden/owid/latest/covid/covid',
+    Namespace = 'owid', Version = 'latest', DatasetName = 'covid', TableName = 'covid');
+
+  @position(2360, 200)
+  LOG INFO NODE 'OwidExplorer' 'Seeded the verified tables.';
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_SeedDatasets ()
+BEGIN
+  @position(120, 200)
+  CALL MICROFLOW Owid.ACT_SeedDatasetsNow () IN QUEUE Owid.RefreshQueue;
+END;
+
+
+-- Walk the index, twenty-five at a time.
+--
+-- A probe is one range request, so a batch is a few seconds; the whole 1,138
+-- would be several minutes and there is no reason to spend it in one go. Each
+-- pass writes down what it learned, so the "only working" filter gets truer
+-- every time somebody presses the button.
+CREATE OR REPLACE MICROFLOW Owid.ACT_VerifyBatchNow ()
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Batch FROM Owid.Dataset WHERE Probed = false SORT BY Path ASC LIMIT 25;
+
+  @position(400, 200)
+  LOOP $D IN $Batch BEGIN
+    @position(440, 320)
+    CALL MICROFLOW Owid.ACT_ProbeDataset (Dataset = $D);
+  END LOOP;
+
+  @position(760, 200)
+  $N = COUNT($Batch);
+
+  @position(920, 200)
+  LOG INFO NODE 'OwidExplorer' 'Verified ' + toString($N) + ' more tables.';
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_VerifyBatch ()
+BEGIN
+  @position(120, 200)
+  CALL MICROFLOW Owid.ACT_VerifyBatchNow () IN QUEUE Owid.RefreshQueue;
+END;

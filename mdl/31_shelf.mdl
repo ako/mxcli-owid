@@ -1,0 +1,222 @@
+-- Stage 31: the shelf.
+--
+-- Tableau's central gesture is dragging a field onto a shelf, and Mendix has
+-- no drag target. What it does have is a list of the table's columns and a row
+-- of buttons per column, which is the same gesture with the drag taken out:
+-- press X on 'year' and the chart's x axis becomes year.
+--
+-- It is also the only form available. An association combo box -- the obvious
+-- alternative, a dropdown of Owid.Field bound to Owid.Card_X -- gets its
+-- association and its data source from mxcli but not the option caption
+-- Mendix requires, so the build fails CE0642 "Property 'Caption' is required".
+-- (FINDINGS #38.)
+--
+-- Every one of these ends with a bumped Revision and a REFRESH, which is what
+-- makes the canvas redraw: DS_Canvas takes the Explorer as its parameter, so
+-- refreshing that object is the signal to re-run every card.
+
+CREATE OR REPLACE MICROFLOW Owid.SUB_Touch (
+  $Explorer: Owid.Explorer,
+  $Note:     String
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Sets FROM Owid.Dataset;
+
+  @position(300, 200)
+  $NSets = COUNT($Sets);
+
+  @position(460, 200)
+  RETRIEVE $Cards FROM Owid.Card;
+
+  @position(620, 200)
+  $NCards = COUNT($Cards);
+
+  -- The counts are recomputed here rather than only at page load, because the
+  -- header claiming "0 charts saved" next to a chart you just added is the
+  -- kind of small lie that makes the rest look untrustworthy.
+  @position(780, 200)
+  CHANGE $Explorer (
+    Revision     = $Explorer/Revision + 1,
+    Message      = $Note,
+    DatasetCount = $NSets,
+    CardCount    = $NCards
+  ) REFRESH;
+END;
+
+
+-- Point the shelf at a card, and bring its table along so the field list below
+-- is the right one. Editing a card and browsing a table are the same selection
+-- as far as the panel is concerned.
+CREATE OR REPLACE MICROFLOW Owid.ACT_EditCard (
+  $Explorer: Owid.Explorer,
+  $Card:     Owid.Card
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Dataset FROM $Card/Owid.Card_Dataset;
+
+  @position(320, 200)
+  CHANGE $Explorer (
+    Owid.Explorer_Card = $Card,
+    Owid.Explorer_Dataset = $Dataset
+  ) REFRESH;
+
+  @position(640, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Editing ' + $Card/Title + '.');
+END;
+
+
+-- The four shelves. Each is the same three steps, and they are separate
+-- microflows rather than one with a role parameter because a button needs a
+-- microflow it can name.
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_ShelfX (
+  $Explorer: Owid.Explorer,
+  $Field:    Owid.Field
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card = empty THEN
+    @position(360, 320)
+    CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Pick a chart to edit first.');
+    @position(760, 320)
+    RETURN;
+  END IF;
+
+  @position(660, 200)
+  CHANGE $Card (Owid.Card_X = $Field) COMMIT;
+
+  @position(880, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'x axis: ' + $Field/Name);
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_ShelfY (
+  $Explorer: Owid.Explorer,
+  $Field:    Owid.Field
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card = empty THEN
+    @position(360, 320)
+    CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Pick a chart to edit first.');
+    @position(760, 320)
+    RETURN;
+  END IF;
+
+  @position(660, 200)
+  CHANGE $Card (Owid.Card_Y = $Field) COMMIT;
+
+  @position(880, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'value: ' + $Field/Name);
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_ShelfSeries (
+  $Explorer: Owid.Explorer,
+  $Field:    Owid.Field
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card = empty THEN
+    @position(360, 320)
+    CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Pick a chart to edit first.');
+    @position(760, 320)
+    RETURN;
+  END IF;
+
+  @position(660, 200)
+  CHANGE $Card (Owid.Card_Series = $Field) COMMIT;
+
+  @position(880, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'split by: ' + $Field/Name);
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_ShelfFilter (
+  $Explorer: Owid.Explorer,
+  $Field:    Owid.Field
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card = empty THEN
+    @position(360, 320)
+    CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Pick a chart to edit first.');
+    @position(760, 320)
+    RETURN;
+  END IF;
+
+  @position(660, 200)
+  CHANGE $Card (Owid.Card_Filter = $Field) COMMIT;
+
+  @position(880, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer,
+    Note = 'filter on ' + $Field/Name + ' — type a value in the panel.');
+END;
+
+
+-- Taking things off the shelves. Split and filter are the optional two, so
+-- they are the two worth being able to clear.
+CREATE OR REPLACE MICROFLOW Owid.ACT_ClearSeries (
+  $Explorer: Owid.Explorer
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card != empty THEN
+    @position(360, 320)
+    CHANGE $Card (Owid.Card_Series = empty) COMMIT;
+  END IF;
+
+  @position(660, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Split cleared.');
+END;
+
+CREATE OR REPLACE MICROFLOW Owid.ACT_ClearFilter (
+  $Explorer: Owid.Explorer
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card != empty THEN
+    @position(360, 320)
+    CHANGE $Card (Owid.Card_Filter = empty, FilterValue = '') COMMIT;
+  END IF;
+
+  @position(660, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = 'Filter cleared.');
+END;
+
+
+-- The panel's own controls all land here: anything typed or picked is already
+-- on the object, this just commits it and redraws.
+CREATE OR REPLACE MICROFLOW Owid.ACT_ApplyCard (
+  $Explorer: Owid.Explorer
+)
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Card FROM $Explorer/Owid.Explorer_Card;
+
+  @position(320, 200)
+  IF $Card != empty THEN
+    @position(360, 320)
+    COMMIT $Card;
+  END IF;
+
+  @position(620, 200)
+  CALL MICROFLOW Owid.SUB_Touch (Explorer = $Explorer, Note = '');
+END;

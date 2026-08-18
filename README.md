@@ -5,13 +5,14 @@ app with [mxcli](https://github.com/ako/mxcli). They read the same public
 parquet catalogue through the same DuckDB, and they answer the question "where
 does the data live" in opposite ways — which is the point of having both.
 
-| | **The Development Plate** (`/`) | **The Mortality Surface** (`/p/live`) |
-| --- | --- | --- |
-| Data | copied into Mendix entities | none stored at all |
-| Path | refresh job → entities → OData → charts | charts → OData → DuckDB → parquet |
-| Rows | 13,760 held | 11.9 M reachable, 0 held |
-| Freshness | as of the last refresh | as of this request |
-| Cost | one 16 s job, then instant | 0.3–1.4 s per figure |
+| | **Development Plate** (`/`) | **Mortality Surface** (`/p/live`) | **Explorer** (`/p/explore`) |
+| --- | --- | --- | --- |
+| Charts | fixed, authored | fixed, authored | chosen by whoever is looking |
+| Data | copied into entities | none stored | none stored |
+| Stored | 13,760 rows | nothing | the catalogue and the card definitions |
+| Path | job → entities → OData → charts | charts → OData → DuckDB → parquet | canvas → connector → DuckDB → parquet |
+| Freshness | as of the last refresh | as of this request | as of this request |
+| Cost | one 16 s job, then instant | 0.3–1.4 s per figure | 0.3–1.9 s per card |
 
 ---
 
@@ -242,14 +243,86 @@ from the scripts.
 
 ---
 
+# Page three — "The Explorer"
+
+## What it is
+
+Not a dashboard someone built for you — a **chart builder**. Browse OWID's
+catalogue, open a table to see the columns it really has, put a column on an
+axis, and keep the result on a canvas that survives a reload.
+
+- **Catalogue** — the tables, searchable, with a filter for the ones confirmed
+  to still be served.
+- **Fields** — the selected table's real columns, read from the parquet footer
+  when you open it. Each row carries four buttons: `x`, `value`, `split`,
+  `filter`. That is Tableau's drag-onto-a-shelf with the drag taken out.
+- **Chart** — the selected card's settings: chart type (line, bar, area,
+  scatter, heatmap, single number), aggregate, filter value, row cap, width.
+- **Canvas** — the saved cards, run live, reorderable.
+
+"Chart it" does not open an empty form. It guesses from the columns the table
+actually has — `year` on x if there is one, `country` / `location` / `entity` as
+the split, the first numeric column that is not already spoken for as the value,
+a line if x is a year and a bar otherwise. On OWID's garden channel that lands
+on something sensible almost every time, because the whole channel is
+harmonised to country × year.
+
+## What is stored, and what is not
+
+The same split as page two, one layer further back:
+
+- **Stored** — the catalogue index, each table's column list once it has been
+  looked at, and the card *definitions*: which table, which columns, which chart
+  type. All small, all slow-changing, and a canvas that does not survive a
+  reload is not a canvas.
+- **Live** — every number on every chart. Each card's query runs against remote
+  parquet when the page draws, and nothing comes back into the database.
+
+A card's whole series arrives as **one JSON document built by DuckDB** —
+`to_json(list(struct_pack(x := …, s := …, y := …)))` over the aggregate returns
+exactly the array Vega wants — so no microflow ever loops five thousand rows to
+build a string.
+
+The columns are chosen by the user but never typed by them: they are references
+to `Owid.Field` rows, which came from `DESCRIBE` on the file itself, so a card
+cannot name a column that does not exist. The one value a person does type — the
+filter — never reaches the statement at all; it is bound as `{filterval}`.
+
+## The catalogue problem, stated plainly
+
+OWID publishes its garden index twice and only one is current:
+
+| | Last-Modified | DuckDB |
+| --- | --- | --- |
+| `catalog-garden.parquet` | **22 Mar 2023** | reads it in 0.6 s |
+| `catalog-garden.feather` | today | cannot read it — LZ4 Arrow IPC |
+
+The 2023 index is not slightly stale: **23 of 24 sampled paths 404**, and
+`garden/un/2024-12-02/un_wpp_lt` — which page two reads on every load — is not
+in it at all. There is no bucket listing and no JSON index to fall back to.
+
+So the browser runs on two sources. **Load the verified set** seeds eleven paths
+checked by hand, so the page opens on tables that work. **Pull the index** adds
+the 1,138 for breadth. **Verify 25 more** probes them in batches and writes down
+which still answer, which is what makes the "only tables confirmed to work"
+filter true rather than a guess. `FINDINGS.md` #39 has the full account.
+
+## What it costs
+
+| | |
+| --- | --- |
+| Catalogue pull, 1,138 rows | ~10 s, on the queue |
+| Column read on opening a table | ~0.5 s, one range request |
+| First card on a cold table, 4,311 rows aggregated | 1.4–1.9 s |
+| Same card after a change (warm connection) | 260–350 ms |
+
+---
+
 # Running it
 
 ```bash
 ./mxcli run --local -p OwidExplorer.mpr     # http://localhost:8080/
 ```
-
-`/` is the stored board, `/p/live` is the live one, and the navigation menu
-carries both.
 
 DuckDB is a **declared Java dependency** of the `Owid` module
 (`org.duckdb:duckdb_jdbc:1.4.1.0`), resolved into `vendorlib/` and committed, so
@@ -261,8 +334,11 @@ hook in `.claude/settings.json` runs `.claude/bootstrap-mxcli.sh`, which builds
 mxcli from **ako/mxcli main** and then caches MxBuild, starts PostgreSQL and
 creates the database.
 
+`/` is the stored board, `/p/live` the live one, `/p/explore` the builder.
+
 The model is built by the MDL scripts in `mdl/`, applied in numeric order:
-`01`–`18` build the stored board, `19`–`24` the live one. The live pages also
+`01`–`18` build the stored board, `19`–`25` the live one, `26`–`33` the
+explorer. The live pages also
 need the `mendix-odata-pushdown` skill pack, which ships the parser the read
 microflows delegate to:
 
@@ -270,6 +346,19 @@ microflows delegate to:
 ./mxcli skill add mendix-odata-pushdown -p OwidExplorer.mpr --module Owid
 ./mxcli exec .claude/skills/mendix-odata-pushdown/mdl/module.mdl -p OwidExplorer.mpr
 ```
+
+The explorer's chart widget takes a **model-built spec** (`specSource`), which
+the bundled Vega widget did not originally have. If the widget is ever rebuilt,
+re-extract its definition or mxcli will silently drop every property it writes:
+
+```bash
+cd .claude/skills/mendix-vega-charts/widget && npm run build
+cp dist/1.0.0/owidexplorer.widget.web.VegaChart.mpk ../../../../widgets/
+./mxcli widget extract --mpk widgets/owidexplorer.widget.web.VegaChart.mpk -p OwidExplorer.mpr
+./mxcli exec mdl/13_page.mdl -p OwidExplorer.mpr   # CE0463: re-apply the pages
+```
+
+See `FINDINGS.md` #36 for why both steps are needed.
 
 - Mendix **11.13.0**
 - mxcli built from source, `ako/mxcli` main

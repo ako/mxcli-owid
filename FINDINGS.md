@@ -970,3 +970,158 @@ embed in the same tick, so both fetches are in flight before either response
 lands and the HTTP cache has nothing to serve the second one from. Two requests,
 300 rows each, ~260 ms — cheap here, and worth knowing before designing a board
 where it would not be.
+
+---
+
+## 36. Changing a pluggable widget's XML invalidates every instance (CE0463)
+
+Adding one optional property to `VegaChart.xml` and rebuilding the `.mpk` broke
+all twelve existing chart instances:
+
+```
+[error] [CE0463] "The definition of this widget has changed. Update this widget
+        by right-clicking it and selecting 'Update widget'…" at Vega Chart 'chartLine'
+```
+
+Studio Pro's fix is a right-click. From mxcli, **re-running the page script is
+the fix** — `CREATE OR REPLACE PAGE` rewrites every instance against the new
+definition. Pages defined as scripts repair themselves; pages drawn by hand
+would have to be touched one at a time. That is a real argument for the whole
+`mdl/` approach, discovered by accident.
+
+There is a second cache. mxcli keeps its own copy of each widget's property
+list in `.mxcli/widgets/<name>.def.json`, and it does **not** notice a rebuilt
+`.mpk`. Symptoms, in order of how misleading they are:
+
+- stale cache → `widget 'cChart' has no property 'specSource'` (MDL-WIDGET01),
+  an error about a property that plainly exists
+- deleted cache → *every* property "is not recognized and will be silently
+  dropped on write" (MDL-WIDGET07), which would have written an empty widget
+
+The fix is to re-extract, and it must be done after every widget rebuild:
+
+```bash
+mxcli widget extract --mpk widgets/<id>.mpk -p App.mpr
+```
+
+## 37. What a list expression can and cannot say
+
+`FIND` and `FILTER` take an expression evaluated against the list's entity, and
+the vocabulary is much narrower than the microflow's. Measured on 11.13, each
+case built in isolation:
+
+| Expression | |
+|---|---|
+| `FILTER($Fields, IsMeasure = true)` | compiles |
+| `FIND($Old, Name = 'year')` | compiles |
+| `FIND($Old, Name = $C/ColName)` — over a RETRIEVED list | compiles |
+| `FILTER($Fields, Name != $X)` — outer variable | **CE0117** |
+| `FILTER($Fields, IsMeasure = true and Name != $X)` — `and` | **CE0117** |
+| `FILTER($Fields, IsMeasure)` — bare boolean | **CE0117** |
+| `FIND($Cols, ColName = $O/Name)` — over a CONNECTOR-returned list | **CE0117** |
+
+So: compare a member to a **literal** and it works; bring in an outer variable,
+an `and`, or a list the External Database Connector produced, and it does not.
+The error is always the same six words — `"Error(s) in expression."` at the
+activity, with no expression and no microflow named — so the only way to find
+which one is to remove them one at a time and re-run `mx check`.
+
+Both workarounds are ordinary:
+
+- **Membership** against a delimited string instead of `FIND` over a connector
+  list. Keep the delimiters: `'|' + $Name + '|'` in `'|a|year|b|'`, or `year`
+  matches `year_of_birth`.
+- **Chain** single-term filters, or filter once and `REMOVE` the exception,
+  instead of one compound expression.
+
+## 38. An association combo box does not survive mxcli
+
+The natural picker for "which column is the x axis" is a combo box over
+`Owid.Field` bound to the `Card_X` association. mxcli writes the association and
+the data source and drops the option caption, so the build fails:
+
+```
+[error] [CE0642] "Property 'Caption' is required." at Combo box 'cb'
+```
+
+`Caption: Name` and `Caption: '{1}', CaptionParams: [{1} = Name]` both parse and
+both vanish; `OptionCaption:` is rejected outright by MDL-WIDGET01. Enumeration
+combo boxes (`Attribute: ChartType`) are fine — this is the association form
+only.
+
+The explorer uses a **shelf** instead: the field list with `x` / `value` /
+`split` / `filter` buttons per row. It is closer to what Tableau actually does
+than a dropdown is, so this one turned out better for being blocked.
+
+## 39. OWID's catalogue index: one format is current, and DuckDB cannot read it
+
+The garden channel publishes its index twice, and the two are three and a half
+years apart:
+
+| | Last-Modified | Size | |
+|---|---|---|---|
+| `catalog-garden.parquet` | **22 Mar 2023** | 48 KB | DuckDB reads it in 0.6 s |
+| `catalog-garden.feather` | **today** | 3.4 MB | DuckDB cannot read it |
+
+The stale parquet is not slightly stale. Of 24 randomly sampled paths, **23
+return 404** — the versions it names were superseded and deleted. Rewriting the
+version segment to `latest` rescues **0 of 24**. And it is stale in the other
+direction too: `garden/un/2024-12-02/un_wpp_lt`, which board two reads several
+times a page, is not in it at all.
+
+The feather is current and even carries `title` and `description` the parquet
+lacks. Reading it takes three separate concessions and then still fails:
+
+1. `read_parquet` on a feather is a parse error — it is Arrow IPC.
+2. The `arrow` extension does not exist for this build; `INSTALL nanoarrow FROM
+   community` does install and load.
+3. `ETag on reading file … was initially X and now Y` — OWID rewrites the file
+   continuously, so `SET unsafe_disable_etag_checks = true`, and then
+   `SET force_download = true` for the size mismatch that follows.
+4. `DESCRIBE` then works and returns the schema. Reading a row does not:
+   `Compression type with value 1 not supported by this build of nanoarrow`.
+   The file is LZ4-compressed.
+
+There is no bucket listing (`?list-type=2` → 404) and no JSON index. So the
+browser is built on two sources rather than one: the 2023 index for breadth,
+and **eleven paths verified by hand** so the page opens on something that works.
+`Verify 25 more` probes the index in batches and writes down what answers,
+which is the only way the "only tables confirmed to work" filter can become
+true.
+
+## 40. Board three: a chart builder over a catalogue, measured
+
+`/p/explore`. Same split as board two, one layer further back:
+
+- **Stored** — the catalogue index, each table's column list once looked at, and
+  the card *definitions*. Small, slow-changing, and worthless if a reload loses
+  them.
+- **Live** — every number on every chart. `DS_Canvas` runs each card's query
+  against remote parquet each time the page draws and writes nothing back.
+
+Measured on the running app:
+
+| | |
+| --- | --- |
+| Catalogue pull, 1,138 rows indexed | ~10 s on the queue |
+| Column read (`DESCRIBE` over the parquet footer) | ~0.5 s, one range request |
+| First card on a cold table, 4,311 rows aggregated | 1.4–1.9 s |
+| Same card after a change (warm connection) | 260–350 ms |
+| Second card, different table, 5,000 rows | 590–815 ms |
+
+Three things that had to be got right:
+
+- **The whole series comes back as one JSON string.**
+  `to_json(list(struct_pack(x := …, s := …, y := …)))` over the aggregate
+  returns exactly the array Vega wants, so the alternative — a microflow looping
+  five thousand rows to concatenate a string — never had to be written.
+- **The columns are user-chosen but not user-typed.** They arrive as
+  `Owid.Field` references, so a card cannot name a column the table does not
+  have; `CardSql` re-checks against the same list before quoting. The one value
+  a person actually types, the filter, never reaches the statement — it is bound
+  as `{filterval}`.
+- **A split by country is 153 series.** Vega truncates the legend and warns.
+  The count now comes back with the data (`count(DISTINCT t.s)`), the legend is
+  turned off above twelve, and the card's own caption says
+  `153 series, legend suppressed` — which is the difference between hiding
+  something and saying so.

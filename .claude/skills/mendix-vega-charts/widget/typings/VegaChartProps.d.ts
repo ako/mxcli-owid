@@ -14,6 +14,7 @@ export interface VegaChartContainerProps {
     style?: CSSProperties;
     tabIndex?: number;
     spec: string;
+    specSource?: EditableValue<string>;
     chartData?: EditableValue<string>;
     datasetName: string;
     selection?: EditableValue<string>;
@@ -35,6 +36,7 @@ export interface VegaChartPreviewProps {
     renderMode: "design" | "xray" | "structure";
     translate: (text: string) => string;
     spec: string;
+    specSource: string;
     chartData: string;
     datasetName: string;
     selection: string;

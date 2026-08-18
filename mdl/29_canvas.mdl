@@ -1,0 +1,224 @@
+-- Stage 29: running the canvas.
+--
+-- DS_Canvas is where the split between stored and live is enforced. It reads
+-- the card DEFINITIONS out of the database, and then, for each one, goes and
+-- gets the numbers. Nothing it fetches is written back.
+--
+-- A card that fails does not fail the board. A table can disappear from the
+-- CDN, a column can be renamed between versions, a filter can be nonsense --
+-- each is caught per card and shown on that card's face, because a canvas of
+-- six charts that goes blank because one of them broke is worse than useless.
+
+-- Everything one card needs to draw itself.
+CREATE OR REPLACE MICROFLOW Owid.SUB_RunCard (
+  $Card: Owid.Card
+)
+  RETURNS Owid.CardView AS $View
+BEGIN
+  @position(120, 200)
+  $T0 = CALL JAVA ACTION Owid.NowMillis ();
+
+  @position(280, 200)
+  RETRIEVE $Dataset FROM $Card/Owid.Card_Dataset;
+
+  @position(440, 200)
+  $View = CREATE Owid.CardView (
+    Title    = $Card/Title,
+    Wide     = $Card/Wide,
+    Note     = '',
+    DataJson = '[]',
+    Rows     = 0,
+    Owid.CardView_Card = $Card
+  );
+
+  @position(640, 200)
+  IF $Dataset = empty THEN
+    @position(680, 340)
+    CHANGE $View (Note = 'This card has no dataset.', Subtitle = '');
+    @position(900, 340)
+    RETURN $View;
+  END IF;
+
+  @position(1060, 200)
+  CHANGE $View (Subtitle = $Dataset/Namespace + ' · ' + $Dataset/TableName
+    + ' · ' + $Dataset/Version);
+
+  -- The whitelist. Every column name the statement may contain comes from here,
+  -- and this list came from DESCRIBE on the file itself.
+  @position(1240, 200)
+  RETRIEVE $Fields FROM $Dataset/Owid.Field_Dataset;
+
+  @position(1400, 200)
+  declare $Allowed String = '';
+
+  @position(1560, 200)
+  LOOP $F IN $Fields BEGIN
+    @position(1600, 320)
+    set $Allowed = $Allowed + $F/Name + ',';
+  END LOOP;
+
+  -- The four choices, read through their associations. A null one is a card
+  -- that is not finished yet, or one whose column went away between dataset
+  -- versions; either way the name comes back empty and CardSql refuses it with
+  -- something the card can print.
+  @position(1800, 200)
+  declare $XName String = '';
+
+  @position(1940, 200)
+  declare $XIsMeasure Boolean = false;
+
+  @position(2080, 200)
+  RETRIEVE $FX FROM $Card/Owid.Card_X;
+
+  @position(2220, 200)
+  IF $FX != empty THEN
+    @position(2260, 320)
+    set $XName = $FX/Name;
+    @position(2420, 320)
+    set $XIsMeasure = $FX/IsMeasure;
+  END IF;
+
+  @position(2620, 200)
+  declare $YName String = '';
+
+  @position(2760, 200)
+  RETRIEVE $FY FROM $Card/Owid.Card_Y;
+
+  @position(2900, 200)
+  IF $FY != empty THEN
+    @position(2940, 320)
+    set $YName = $FY/Name;
+  END IF;
+
+  @position(3100, 200)
+  declare $SName String = '';
+
+  @position(3240, 200)
+  RETRIEVE $FS FROM $Card/Owid.Card_Series;
+
+  @position(3380, 200)
+  IF $FS != empty THEN
+    @position(3420, 320)
+    set $SName = $FS/Name;
+  END IF;
+
+  @position(3580, 200)
+  declare $FName String = '';
+
+  @position(3720, 200)
+  RETRIEVE $FF FROM $Card/Owid.Card_Filter;
+
+  @position(3860, 200)
+  IF $FF != empty THEN
+    @position(3900, 320)
+    set $FName = $FF/Name;
+  END IF;
+
+  @position(4100, 200)
+  declare $Url String = @Owid.CatalogRoot + $Dataset/Path + '.parquet';
+
+  @position(4280, 200)
+  $Sql = CALL JAVA ACTION Owid.CardSql (
+    Url = $Url,
+    ChartType = toString($Card/ChartType),
+    XField = $XName, YField = $YName, SeriesField = $SName,
+    Agg = toString($Card/Agg),
+    FilterField = $FName,
+    RowLimit = $Card/RowLimit,
+    AllowedFields = $Allowed
+  ) ON ERROR {
+    @position(4320, 340)
+    CHANGE $View (Note = 'This chart is not configured yet — pick the fields it needs.');
+    @position(4600, 340)
+    RETURN $View;
+  };
+
+  @position(4560, 200)
+  $Data = EXECUTE DATABASE QUERY Owid.OwidDuck.ChartJson DYNAMIC $Sql
+    (filterval = $Card/FilterValue) ON ERROR {
+    @position(4600, 480)
+    CHANGE $View (Note = 'The source refused that query. The table may no longer be published, or the filter does not fit the column.');
+    @position(4940, 480)
+    RETURN $View;
+  };
+
+  @position(4900, 200)
+  $Row = HEAD($Data);
+
+  @position(5040, 200)
+  declare $SeriesN Integer = 0;
+
+  @position(5180, 200)
+  IF $Row != empty THEN
+    @position(5220, 320)
+    set $SeriesN = $Row/S;
+  END IF;
+
+  @position(5400, 200)
+  $Spec = CALL JAVA ACTION Owid.CardSpec (
+    ChartType = toString($Card/ChartType),
+    XField = $XName, YField = $YName, SeriesField = $SName,
+    Agg = toString($Card/Agg),
+    XIsMeasure = $XIsMeasure,
+    SeriesCount = $SeriesN,
+    Height = 260
+  );
+
+  @position(5620, 200)
+  $T1 = CALL JAVA ACTION Owid.NowMillis ();
+
+  @position(5780, 200)
+  IF $Row = empty THEN
+    @position(5820, 340)
+    CHANGE $View (Note = 'That query returned nothing.', Ms = $T1 - $T0);
+  ELSE
+    @position(5820, 460)
+    CHANGE $View (
+      SpecJson = $Spec, DataJson = $Row/J, Rows = $Row/N, Ms = $T1 - $T0, Note = ''
+    );
+    -- Say what was hidden rather than quietly hiding it.
+    @position(6120, 460)
+    IF $SeriesN > 12 THEN
+      @position(6160, 580)
+      CHANGE $View (Subtitle = $View/Subtitle + '  ·  ' + toString($SeriesN)
+        + ' series, legend suppressed');
+    END IF;
+  END IF;
+
+  @position(6500, 200)
+  RETURN $View;
+END;
+
+
+-- The canvas: every saved card, run.
+--
+-- Serially, because each one is a separate remote read and Mendix has no
+-- parallel-for -- but they share the connector's pooled DuckDB connection, so
+-- the second card onto the same table pays almost nothing.
+--
+-- It takes the Explorer it will never read. A microflow data source re-runs
+-- when its parameter object is refreshed, and without a parameter there is
+-- nothing to refresh -- the card would change in the database and the chart on
+-- screen would not move.
+CREATE OR REPLACE MICROFLOW Owid.DS_Canvas (
+  $Explorer: Owid.Explorer
+)
+  RETURNS List of Owid.CardView AS $Views
+BEGIN
+  @position(120, 200)
+  RETRIEVE $Cards FROM Owid.Card SORT BY SortOrder ASC;
+
+  @position(300, 200)
+  $Views = CREATE LIST OF Owid.CardView;
+
+  @position(460, 200)
+  LOOP $C IN $Cards BEGIN
+    @position(500, 320)
+    $V = CALL MICROFLOW Owid.SUB_RunCard (Card = $C);
+    @position(700, 320)
+    ADD $V TO $Views;
+  END LOOP;
+
+  @position(900, 200)
+  RETURN $Views;
+END;

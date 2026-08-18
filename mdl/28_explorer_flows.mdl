@@ -1,0 +1,174 @@
+-- Stage 28: the explorer's behaviour.
+--
+-- Four jobs: pull the catalogue index, look at one table's columns, run a
+-- card, and the small CRUD around the canvas.
+
+CREATE OR MODIFY CONSTANT Owid.CatalogUrl
+  TYPE String
+  DEFAULT 'https://catalog.ourworldindata.org/catalog-garden.parquet'
+  COMMENT 'The published index of OWID''s garden channel. Metadata only.';
+
+CREATE OR MODIFY CONSTANT Owid.CatalogRoot
+  TYPE String
+  DEFAULT 'https://catalog.ourworldindata.org/'
+  COMMENT 'Prefix for a dataset path; the data URL is root + path + .parquet.';
+
+
+-- Pull the index.
+--
+-- 1,138 rows of metadata, read in about half a second, then upserted one at a
+-- time. Upsert rather than replace because Probed/Available and a table's
+-- column list are worth more than they cost to keep: they are the answers to
+-- questions the index cannot answer.
+--
+-- It runs on the refresh queue for the same reason board one's load does --
+-- a thousand commits is not something to do on a request thread.
+CREATE OR REPLACE MICROFLOW Owid.ACT_RefreshCatalogNow ()
+BEGIN
+  @position(120, 200)
+  declare $Sql String = 'SELECT path, namespace AS ns, dataset AS ds, version AS ver, '
+    + '"table" AS tbl, len(dimensions) AS dims FROM read_parquet('''
+    + @Owid.CatalogUrl + ''') WHERE is_public ORDER BY namespace, dataset, "table"';
+
+  @position(340, 200)
+  $Rows = EXECUTE DATABASE QUERY Owid.OwidDuck.Catalog DYNAMIC $Sql ();
+
+  @position(520, 200)
+  declare $Added Integer = 0;
+
+  @position(680, 200)
+  LOOP $R IN $Rows BEGIN
+    @position(720, 320)
+    RETRIEVE $Existing FROM Owid.Dataset WHERE Path = $R/Path LIMIT 1;
+
+    @position(900, 320)
+    IF $Existing = empty THEN
+      @position(940, 440)
+      $New = CREATE Owid.Dataset (
+        Path = $R/Path, Namespace = $R/Namespace, DatasetName = $R/DatasetName,
+        Version = $R/Version, TableName = $R/TableName, Dims = $R/Dims
+      ) COMMIT;
+      @position(1140, 440)
+      set $Added = $Added + 1;
+    ELSE
+      @position(940, 560)
+      CHANGE $Existing (
+        Namespace = $R/Namespace, DatasetName = $R/DatasetName,
+        Version = $R/Version, TableName = $R/TableName, Dims = $R/Dims
+      ) COMMIT;
+    END IF;
+  END LOOP;
+
+  @position(1400, 200)
+  $Total = COUNT($Rows);
+
+  @position(1560, 200)
+  LOG INFO NODE 'OwidExplorer' 'Catalogue refreshed: ' + toString($Total)
+    + ' tables in the garden channel, ' + toString($Added) + ' new.';
+END;
+
+-- The button, so the page never waits on a thousand commits.
+CREATE OR REPLACE MICROFLOW Owid.ACT_RefreshCatalog ()
+BEGIN
+  @position(120, 200)
+  CALL MICROFLOW Owid.ACT_RefreshCatalogNow () IN QUEUE Owid.RefreshQueue;
+END;
+
+
+-- Look at one table.
+--
+-- DESCRIBE reads the parquet footer, so this is one range request and well
+-- under a second -- and it is the only way to find out whether the file is
+-- there at all. The published index lists tables the CDN 404s, and nothing in
+-- the index predicts which, so the failure is expected rather than exceptional:
+-- it is caught, written down, and shown on the row.
+CREATE OR REPLACE MICROFLOW Owid.ACT_ProbeDataset (
+  $Dataset: Owid.Dataset
+)
+BEGIN
+  @position(120, 200)
+  declare $Url String = @Owid.CatalogRoot + $Dataset/Path + '.parquet';
+
+  @position(300, 200)
+  declare $Sql String = 'SELECT column_name, column_type, regexp_matches(column_type, '
+    + '''^(BIGINT|HUGEINT|INTEGER|SMALLINT|TINYINT|UBIGINT|UINTEGER|USMALLINT|UTINYINT'
+    + '|DOUBLE|FLOAT|REAL|DECIMAL|NUMERIC)'') AS is_num FROM (DESCRIBE SELECT * FROM '
+    + 'read_parquet(''' + $Url + '''))';
+
+  @position(520, 200)
+  RETRIEVE $Old FROM $Dataset/Owid.Field_Dataset;
+
+  @position(700, 200)
+  $Cols = EXECUTE DATABASE QUERY Owid.OwidDuck.Describe DYNAMIC $Sql () ON ERROR {
+    @position(740, 340)
+    CHANGE $Dataset (
+      Probed = true, Available = false,
+      ProbeNote = 'The catalogue lists this table but the file is not served.',
+      LastProbedAt = [%CurrentDateTime%]
+    ) COMMIT REFRESH;
+    @position(1060, 340)
+    RETURN;
+  };
+
+  -- Reconcile, do not replace.
+  --
+  -- Deleting every Field and recreating them would null every card's axis
+  -- references on each probe -- the user's charts would come apart because
+  -- somebody pressed refresh. So: add what is new, drop what is gone, and
+  -- leave the rest alone with their identities intact.
+  @position(940, 200)
+  declare $I Integer = 0;
+
+  @position(1100, 200)
+  LOOP $C IN $Cols BEGIN
+    @position(1140, 320)
+    set $I = $I + 1;
+
+    @position(1300, 320)
+    $Match = FIND($Old, Name = $C/ColName);
+
+    @position(1460, 320)
+    IF $Match = empty THEN
+      @position(1500, 440)
+      $F = CREATE Owid.Field (
+        Name = $C/ColName, SqlType = $C/ColType, Ordinal = $I,
+        IsMeasure = $C/IsNum, Owid.Field_Dataset = $Dataset
+      ) COMMIT;
+    ELSE
+      @position(1500, 560)
+      CHANGE $Match (SqlType = $C/ColType, Ordinal = $I, IsMeasure = $C/IsNum) COMMIT;
+    END IF;
+  END LOOP;
+
+  -- Anything the table no longer has. A card pointing at one keeps existing and
+  -- reports the axis it lost, because the reference nulls rather than cascades.
+  --
+  -- Membership is tested against a delimited string rather than with FIND,
+  -- which is not stylistic: FIND over a list the CONNECTOR returned does not
+  -- compile -- CE0117 on the Find activity, no further detail -- while FIND
+  -- over a retrieved list of the same shape is fine. The pipes matter: without
+  -- them 'year' would match 'year_of_birth'. (FINDINGS #37.)
+  @position(1900, 200)
+  declare $Live String = '|';
+
+  @position(2040, 200)
+  LOOP $C2 IN $Cols BEGIN
+    @position(2080, 320)
+    set $Live = $Live + $C2/ColName + '|';
+  END LOOP;
+
+  @position(2260, 200)
+  LOOP $O IN $Old BEGIN
+    @position(2300, 320)
+    IF contains($Live, '|' + $O/Name + '|') = false THEN
+      @position(2340, 440)
+      DELETE $O;
+    END IF;
+  END LOOP;
+
+  @position(2400, 200)
+  CHANGE $Dataset (
+    Probed = true, Available = true, ProbeNote = '', FieldCount = $I,
+    LastProbedAt = [%CurrentDateTime%]
+  ) COMMIT REFRESH;
+END;

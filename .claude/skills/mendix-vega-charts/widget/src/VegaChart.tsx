@@ -51,7 +51,7 @@ function cleanDatum(datum: Record<string, unknown>): Record<string, unknown> {
 }
 
 export function VegaChart(props: VegaChartContainerProps): ReactElement {
-    const { spec, chartData, datasetName, chartHeight, renderer, showActions, selection, onClick } = props;
+    const { spec, specSource, chartData, datasetName, chartHeight, renderer, showActions, selection, onClick } = props;
     const hostRef = useRef<HTMLDivElement>(null);
     const viewRef = useRef<EmbedResult | null>(null);
     const [error, setError] = useState<string>();
@@ -64,18 +64,33 @@ export function VegaChart(props: VegaChartContainerProps): ReactElement {
 
     const dataValue = chartData?.status === "available" ? chartData.value : undefined;
 
+    // A spec the model builds wins over the one authored here, because a chart
+    // whose shape the user picks at run time has no design-time spec to author.
+    // The static one stays as the fallback for the tick before the attribute
+    // loads, which is what stops an explorer page flashing an error frame on
+    // every card while its microflow runs.
+    const specValue = specSource?.status === "available" ? (specSource.value ?? "") : undefined;
+    const activeSpec = specValue !== undefined && specValue !== "" ? specValue : spec ?? "";
+
     // A data attribute that is bound but not yet loaded is NOT the same as no
     // data attribute at all. Embedding while it loads hands Vega an empty
     // dataset, which computes extents of [Infinity, -Infinity] and warns once
     // per encoded field before the real data arrives and re-renders. Leaving
     // chartData unbound stays legal — that is the URL form, where the spec
     // carries its own data.url and there is nothing to wait for.
-    const awaitingData = chartData !== undefined && chartData.status !== "available";
+    const awaitingData =
+        (chartData !== undefined && chartData.status !== "available") ||
+        // Same reasoning for the spec: embedding the fallback and then
+        // re-embedding the real one draws the wrong chart first, visibly.
+        (specSource !== undefined && specSource.status !== "available" && !spec);
 
     // The spec is static and the data is not, so they are parsed apart. Only the
     // data changes between renders, and re-parsing a spec on every model update
     // would be wasted work.
-    const parsedSpec = useMemo(() => parseJson<VisualizationSpec>(spec, "Specification"), [spec]);
+    const parsedSpec = useMemo(
+        () => (activeSpec ? parseJson<VisualizationSpec>(activeSpec, "Specification") : { value: undefined }),
+        [activeSpec]
+    );
     const parsedData = useMemo(
         () => (dataValue ? parseJson<unknown[]>(dataValue, "Data") : { value: undefined }),
         [dataValue]

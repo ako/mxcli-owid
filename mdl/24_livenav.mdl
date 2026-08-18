@@ -1,14 +1,20 @@
--- Stage 24: two pages, so the menu has to say which is which.
+-- Stage 24: three pages, so the menu has to say which is which.
 --
 -- The default profile still opened on the copied dashboard with a leftover
--- 'Home' item pointing at MyFirstModule. Both boards are now named for what
--- they demonstrate, because the difference between them is the point: same
--- source, same DuckDB, opposite answers to "where does the data live".
+-- 'Home' item pointing at MyFirstModule. Each board is named for what it
+-- demonstrates, because the differences between them are the point: the same
+-- source and the same DuckDB, with the data copied, read per request, or
+-- chosen by whoever is looking.
+--
+-- This profile is owned here and nowhere else. Stage 13 used to end with its
+-- own CREATE OR REPLACE NAVIGATION, which silently reverted this menu every
+-- time that stage was re-run.
 
 CREATE OR REPLACE NAVIGATION Responsive
   HOME PAGE Owid.Dashboard
   MENU (
     MENU ITEM 'Development Plate — stored' PAGE Owid.Dashboard;
     MENU ITEM 'Mortality Surface — live' PAGE Owid.LiveDashboard;
+    MENU ITEM 'Explorer — build your own' PAGE Owid.Explore;
   )
 ;
